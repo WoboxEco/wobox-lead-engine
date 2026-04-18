@@ -1,0 +1,171 @@
+import {
+  createAdminClient,
+  createLogger,
+  isWoboxVenture,
+  loopScoreSchema,
+  scoringModelForVenture,
+  woboxScoreSchema,
+  writeErrorLog,
+  type Venture,
+} from '@wobox/core';
+import { claude } from '@wobox/integrations';
+import { buildLeadData, loadPrompt } from '@wobox/prompts';
+
+export interface ScoreLeadsOptions {
+  venture?: Venture;
+  id?: string;
+  all?: boolean;
+  limit?: string;
+}
+
+export async function run(opts: ScoreLeadsOptions): Promise<void> {
+  const log = createLogger('score-leads');
+  const db = createAdminClient();
+
+  if (!opts.id && !opts.all) {
+    throw new Error('Requiere --id <uuid> o --all');
+  }
+
+  const limit = Number.parseInt(opts.limit ?? '10', 10);
+
+  // Query companies target.
+  let query = db.from('companies').select('*, contacts(*)').limit(limit);
+  if (opts.id) {
+    query = db.from('companies').select('*, contacts(*)').eq('id', opts.id);
+  } else {
+    query = query.in('stage', ['new', 'enriched']);
+    if (opts.venture) {
+      query = query.eq('venture', opts.venture);
+    }
+  }
+
+  const { data: companies, error } = await query;
+  if (error) throw new Error(`Failed to fetch companies: ${error.message}`);
+  if (!companies || companies.length === 0) {
+    log.warn('no companies to score');
+    return;
+  }
+
+  log.info({ count: companies.length }, 'scoring companies');
+
+  let ok = 0;
+  let failed = 0;
+
+  for (const company of companies) {
+    const c = company as Record<string, unknown> & { id: string; venture: Venture };
+    try {
+      await scoreOne(c, db, log);
+      ok += 1;
+    } catch (err) {
+      failed += 1;
+      log.error({ err, companyId: c.id }, 'score failed');
+      await writeErrorLog(db, {
+        skill: 'score-leads',
+        error: err,
+        companyId: c.id,
+        context: { venture: c.venture },
+      });
+    }
+  }
+
+  log.info({ ok, failed, total: companies.length }, 'scoring done');
+}
+
+async function scoreOne(
+  company: Record<string, unknown> & { id: string; venture: Venture },
+  db: ReturnType<typeof createAdminClient>,
+  log: ReturnType<typeof createLogger>,
+): Promise<void> {
+  const venture = company.venture;
+  const scoringModel = scoringModelForVenture(venture);
+
+  const { contacts, ...companyFields } = company as typeof company & { contacts?: unknown[] };
+  const leadData = buildLeadData(companyFields, (contacts as Record<string, unknown>[]) ?? []);
+
+  const prompt = await loadPrompt('scoring', scoringModel, { LEAD_DATA: leadData });
+
+  if (isWoboxVenture(venture)) {
+    const score = await claude.completeJson({
+      system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
+      user: prompt,
+      schema: woboxScoreSchema,
+      venture,
+      operation: `score-${scoringModel}`,
+    });
+
+    await persistWoboxScore(db, company.id, scoringModel, score);
+  } else {
+    const score = await claude.completeJson({
+      system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
+      user: prompt,
+      schema: loopScoreSchema,
+      venture,
+      operation: `score-${scoringModel}`,
+    });
+
+    await persistLoopScore(db, company.id, scoringModel, score);
+  }
+
+  const { error: stageErr } = await db
+    .from('companies')
+    .update({ stage: 'qualified', updated_at: new Date().toISOString() })
+    .eq('id', company.id);
+  if (stageErr) log.warn({ err: stageErr }, 'stage update failed');
+}
+
+type WoboxScore = ReturnType<typeof woboxScoreSchema.parse>;
+type LoopScore = ReturnType<typeof loopScoreSchema.parse>;
+
+async function persistWoboxScore(
+  db: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  scoringModel: string,
+  score: WoboxScore,
+): Promise<void> {
+  const { error } = await db.from('scores').insert({
+    company_id: companyId,
+    total_score: score.total_score,
+    scoring_model: scoringModel,
+    dimensions: {
+      vertical: score.vertical_score,
+      scale: score.scale_score,
+      overstock: score.overstock_score,
+      franchise: score.franchise_score,
+      region: score.region_score,
+    },
+    ai_reasoning: score.ai_reasoning,
+    buyer_persona_assigned: null,
+    scored_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(`Failed to insert wobox score: ${error.message}`);
+}
+
+async function persistLoopScore(
+  db: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  scoringModel: string,
+  score: LoopScore,
+): Promise<void> {
+  const { error: scoreErr } = await db.from('scores').insert({
+    company_id: companyId,
+    total_score: score.total_score,
+    scoring_model: scoringModel,
+    dimensions: {
+      recurrence: score.recurrence_score,
+      subsector: score.subsector_score,
+      digital: score.digital_score,
+      scale: score.scale_score,
+      region: score.region_score,
+    },
+    ai_reasoning: score.ai_reasoning,
+    buyer_persona_assigned: score.buyer_persona,
+    scored_at: new Date().toISOString(),
+  });
+  if (scoreErr) throw new Error(`Failed to insert loop score: ${scoreErr.message}`);
+
+  const { error: bpErr } = await db
+    .from('companies')
+    .update({ buyer_persona: score.buyer_persona })
+    .eq('id', companyId);
+  if (bpErr) throw new Error(`Failed to set buyer_persona: ${bpErr.message}`);
+}

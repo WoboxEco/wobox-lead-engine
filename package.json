@@ -1,0 +1,28 @@
+{
+  "name": "wobox-lead-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Motor unificado de generacion y gestion de leads outbound para Wobox Food, Wobox Fashion y Loop.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "skill": "pnpm --filter @wobox/skills exec skill",
+    "agent": "pnpm --filter @wobox/agents exec agent",
+    "dev": "pnpm --filter @wobox/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "db:types": "supabase gen types typescript --local > packages/core/src/database.types.ts",
+    "db:migrate": "pnpm skill setup-database"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@wobox/integrations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./claude": "./src/claude.ts",
+    "./apollo": "./src/apollo.ts",
+    "./apify": "./src/apify.ts",
+    "./hubspot": "./src/hubspot.ts",
+    "./calendly": "./src/calendly.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@wobox/core": "workspace:*",
+    "p-retry": "^6.2.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
