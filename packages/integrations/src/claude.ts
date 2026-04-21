@@ -27,6 +27,7 @@ function getClient(): Anthropic {
 export interface CompleteJsonParams<T> {
   system: string;
   user: string;
+  cachedPrefix?: string;
   schema: ZodSchema<T>;
   venture?: Venture;
   operation: string;
@@ -45,18 +46,27 @@ export async function completeJson<T>(params: CompleteJsonParams<T>): Promise<T>
         model,
         max_tokens: maxTokens,
         system: params.system,
-        messages: [{ role: 'user', content: params.user }],
+        messages: [{ role: 'user', content: buildUserContent(params.cachedPrefix, params.user) }],
       });
     },
     { retries: 3, minTimeout: 1000, factor: 2 },
   );
 
+  const usage = response.usage as {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+
   await trackUsage({
     operation: params.operation,
     model,
     ...(params.venture ? { venture: params.venture } : {}),
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
   });
 
   const text = response.content
@@ -76,6 +86,7 @@ export async function completeJson<T>(params: CompleteJsonParams<T>): Promise<T>
 export async function completeText(params: {
   system: string;
   user: string;
+  cachedPrefix?: string;
   venture?: Venture;
   operation: string;
   maxTokens?: number;
@@ -91,18 +102,27 @@ export async function completeText(params: {
         model,
         max_tokens: maxTokens,
         system: params.system,
-        messages: [{ role: 'user', content: params.user }],
+        messages: [{ role: 'user', content: buildUserContent(params.cachedPrefix, params.user) }],
       });
     },
     { retries: 3, minTimeout: 1000, factor: 2 },
   );
 
+  const usage = response.usage as {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+
   await trackUsage({
     operation: params.operation,
     model,
     ...(params.venture ? { venture: params.venture } : {}),
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
   });
 
   return response.content
@@ -111,20 +131,43 @@ export async function completeText(params: {
     .join('');
 }
 
+function buildUserContent(
+  cachedPrefix: string | undefined,
+  user: string,
+): Anthropic.TextBlockParam[] {
+  if (!cachedPrefix) return [{ type: 'text', text: user }];
+  return [
+    { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: user },
+  ];
+}
+
 async function trackUsage(params: {
   operation: string;
   model: string;
   venture?: Venture;
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
 }): Promise<void> {
   try {
     const db = createAdminClient();
+    // Total tokens = input (non-cached) + cache writes + cache reads + output.
+    // Cache stats quedan en operation suffix: "::cache=W/R" para show-metrics.
+    const cacheSuffix =
+      params.cacheCreationTokens > 0 || params.cacheReadTokens > 0
+        ? `::cache=${params.cacheCreationTokens}/${params.cacheReadTokens}`
+        : '';
     await db.from('api_usage').insert({
       service: 'claude',
-      operation: `${params.operation}::${params.model}`,
+      operation: `${params.operation}::${params.model}${cacheSuffix}`,
       credits_used: 0,
-      tokens_used: params.inputTokens + params.outputTokens,
+      tokens_used:
+        params.inputTokens +
+        params.outputTokens +
+        params.cacheCreationTokens +
+        params.cacheReadTokens,
       venture: params.venture ?? null,
     });
   } catch {

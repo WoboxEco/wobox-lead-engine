@@ -37,3 +37,41 @@ export function buildLeadData(
 ): string {
   return JSON.stringify({ company, contacts }, null, 2);
 }
+
+/**
+ * Carga un prompt y lo parte en 2: la parte estable (cacheable) y la parte variable.
+ * Hidrata todas las vars EXCEPTO la del marker, que queda como variable.
+ * Uso tipico: scoring donde el template es identico y solo cambia LEAD_DATA por lead.
+ */
+export async function loadPromptSplit(
+  category: PromptCategory,
+  name: string,
+  stableVars: Record<string, string | number | null | undefined>,
+  variableKey: string,
+  variableValue: string,
+): Promise<{ stable: string; variable: string }> {
+  const path = resolve(PROMPTS_ROOT, category, `${name}.md`);
+  const raw = await readFile(path, 'utf-8');
+
+  // Hidrata todas excepto variableKey.
+  const hydrated = raw.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+    if (key === variableKey) return match;
+    const value = stableVars[key];
+    if (value === undefined || value === null) {
+      throw new Error(`Prompt "${name}" missing stable var: ${key}`);
+    }
+    return String(value);
+  });
+
+  const marker = `{{${variableKey}}}`;
+  const idx = hydrated.indexOf(marker);
+  if (idx < 0) throw new Error(`Prompt "${name}" no contiene marker {{${variableKey}}}`);
+
+  const stable = hydrated.slice(0, idx);
+  const trailing = hydrated.slice(idx + marker.length);
+
+  return {
+    stable,
+    variable: variableValue + trailing,
+  };
+}

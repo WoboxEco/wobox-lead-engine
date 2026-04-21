@@ -218,21 +218,36 @@ async function costBreakdown(
   let apifyCost = 0;
   let claudeTokens = 0;
   let apifyCredits = 0;
+  let cacheReads = 0;
+  let cacheCreations = 0;
 
   for (const r of rows) {
     if (r.service === 'claude') {
       claudeTokens += r.tokens_used ?? 0;
-      // Extraer model del operation: "prefix::<model_id>"
-      const modelMatch = r.operation.match(/::(.+)$/);
+      // Parse operation: "prefix::<model>[::cache=W/R]"
+      const modelMatch = r.operation.match(/::([^:]+?)(?:::|$)/);
+      const cacheMatch = r.operation.match(/::cache=(\d+)\/(\d+)/);
       const model = modelMatch?.[1] ?? 'claude-sonnet-4-5';
       const pricing = CLAUDE_PRICING[model];
-      if (pricing) {
-        // Aprox: 90% input, 10% output (no guardamos breakdown en api_usage hoy).
-        const tokens = r.tokens_used ?? 0;
-        claudeCost +=
-          ((tokens * 0.9) / 1_000_000) * pricing.input +
-          ((tokens * 0.1) / 1_000_000) * pricing.output;
-      }
+      if (!pricing) continue;
+
+      const w = cacheMatch ? Number.parseInt(cacheMatch[1]!, 10) : 0;
+      const r_ = cacheMatch ? Number.parseInt(cacheMatch[2]!, 10) : 0;
+      cacheCreations += w;
+      cacheReads += r_;
+
+      // Aproximacion: regular = total - cache writes - cache reads.
+      // output ~10% del regular (no se guarda breakdown exacto en api_usage).
+      const total = r.tokens_used ?? 0;
+      const regular = Math.max(0, total - w - r_);
+      const outputTokens = Math.round(regular * 0.1);
+      const inputTokens = regular - outputTokens;
+
+      claudeCost +=
+        (inputTokens / 1_000_000) * pricing.input +
+        (outputTokens / 1_000_000) * pricing.output +
+        (w / 1_000_000) * pricing.input * 1.25 +
+        (r_ / 1_000_000) * pricing.input * 0.1;
     } else if (r.service === 'apify') {
       apifyCredits += r.credits_used;
       const perUnit = APIFY_PRICING[r.operation] ?? 0;
@@ -241,7 +256,13 @@ async function costBreakdown(
   }
 
   console.log('\nCostos estimados:');
-  console.log(`  Claude : ${claudeTokens} tokens  ~$${claudeCost.toFixed(3)}`);
+  console.log(
+    `  Claude : ${claudeTokens} tokens (cache write: ${cacheCreations}, cache read: ${cacheReads})  ~$${claudeCost.toFixed(3)}`,
+  );
   console.log(`  Apify  : ${apifyCredits} places   ~$${apifyCost.toFixed(3)}`);
   console.log(`  Total  : ~$${(claudeCost + apifyCost).toFixed(3)}`);
+  if (cacheReads > 0) {
+    const savings = (cacheReads / 1_000_000) * 3 * 0.9; // ~90% ahorro vs input regular a Sonnet rate
+    console.log(`  Ahorro estimado por cache reads: ~$${savings.toFixed(3)}`);
+  }
 }

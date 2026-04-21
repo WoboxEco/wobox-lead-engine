@@ -9,7 +9,7 @@ import {
   writeErrorLog,
 } from '@wobox/core';
 import { claude } from '@wobox/integrations';
-import { buildLeadData, loadPrompt } from '@wobox/prompts';
+import { buildLeadData, loadPromptSplit } from '@wobox/prompts';
 
 // Default: Haiku. Scoring es clasificacion multi-dimensional con reasoning corto.
 // Override con --model=sonnet si queres validar consistencia en una corrida.
@@ -92,12 +92,21 @@ async function scoreOne(
   const { contacts, ...companyFields } = company as typeof company & { contacts?: unknown[] };
   const leadData = buildLeadData(companyFields, (contacts as Record<string, unknown>[]) ?? []);
 
-  const prompt = await loadPrompt('scoring', scoringModel, { LEAD_DATA: leadData });
+  // Split para prompt caching: template estable (instructions + criterios) cacheable,
+  // LEAD_DATA variable por lead. Cache hit a partir de la 2da corrida del batch.
+  const { stable, variable } = await loadPromptSplit(
+    'scoring',
+    scoringModel,
+    {},
+    'LEAD_DATA',
+    leadData,
+  );
 
   if (isWoboxVenture(venture)) {
     const score = await claude.completeJson({
       system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
-      user: prompt,
+      cachedPrefix: stable,
+      user: variable,
       schema: woboxScoreSchema,
       venture,
       operation: `score-${scoringModel}`,
@@ -108,7 +117,8 @@ async function scoreOne(
   } else {
     const score = await claude.completeJson({
       system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
-      user: prompt,
+      cachedPrefix: stable,
+      user: variable,
       schema: loopScoreSchema,
       venture,
       operation: `score-${scoringModel}`,
