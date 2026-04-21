@@ -31,6 +31,10 @@ program
   .option('--id <uuid>', 'Scorear 1 company especifica')
   .option('--all', 'Scorear todas las companies en stage new|enriched')
   .option('--limit <n>', 'Limite de companies a procesar', '10')
+  .option(
+    '--stages <list>',
+    'Stages a scorear (CSV). Default: new,enriched. Para rescorear: new,enriched,qualified',
+  )
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: haiku)')
   .action(scoreLeads.run);
 
@@ -41,7 +45,12 @@ program
   .action(searchLeads.run);
 program
   .command('search-leads-web')
-  .description('[stub] Apify/web search para Loop locales (default: haiku)')
+  .description('Apify Google Maps search para Loop locales (default: haiku)')
+  .option('--subsector <sub>', 'cafeteria | peluqueria | gym | etc. (default: cafeteria)')
+  .option('--city <city>', 'Ciudad (default: Buenos Aires)')
+  .option('--neighborhood <barrio>', 'Barrio especifico (ej: "Palermo Soho")')
+  .option('--campaign <name>', 'Asociar leads a una campana (se crea si no existe)')
+  .option('--limit <n>', 'Max places por query de Apify (default: 30)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
   .action(searchLeadsWeb.run);
 program.command('import-csv').description('[stub] Import bulk desde CSV').action(importCsv.run);
@@ -59,7 +68,10 @@ program
   .description('Genera mensaje draft via Claude (default: sonnet)')
   .option('--id <uuid>', 'company_id target')
   .option('--contact-id <uuid>', 'Forzar contacto especifico (default: decision maker)')
-  .option('--approach <type>', 'warm_intro | nurture | direct (default: auto segun warm_path + score)')
+  .option(
+    '--approach <type>',
+    'warm_intro | nurture | direct (default: auto segun warm_path + score)',
+  )
   .option('--channel <channel>', 'linkedin | email | whatsapp | instagram_dm (default: linkedin)')
   .option('--step <n>', 'Step 1-4 (solo nurture, default: 1)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
@@ -75,7 +87,12 @@ program
 program.command('show-metrics').description('[stub] KPIs por venture').action(showMetrics.run);
 program
   .command('approve-message')
-  .description('[stub] Aprobar/editar/descartar drafts')
+  .description('Listar / aprobar / editar / enviar / descartar drafts')
+  .option('--id <uuid>', 'message_id target (omitir para listar drafts)')
+  .option('--action <type>', 'approve | edit | send | discard')
+  .option('--body <text>', 'Cuerpo nuevo (solo action=edit)')
+  .option('--subject <text>', 'Subject nuevo (solo email, action=edit)')
+  .option('--venture <venture>', 'Filtrar listado por venture')
   .action(approveMessage.run);
 
 program.parseAsync(process.argv).catch((err) => {

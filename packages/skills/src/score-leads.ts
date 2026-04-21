@@ -21,6 +21,7 @@ export interface ScoreLeadsOptions {
   all?: boolean;
   limit?: string;
   model?: string;
+  stages?: string;
 }
 
 export async function run(opts: ScoreLeadsOptions): Promise<void> {
@@ -36,11 +37,12 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   log.info({ model }, 'using model');
 
   // Query companies target.
+  const stagesFilter = (opts.stages ?? 'new,enriched').split(',').map((s) => s.trim());
   let query = db.from('companies').select('*, contacts(*)').limit(limit);
   if (opts.id) {
     query = db.from('companies').select('*, contacts(*)').eq('id', opts.id);
   } else {
-    query = query.in('stage', ['new', 'enriched']);
+    query = query.in('stage', stagesFilter);
     if (opts.venture) {
       query = query.eq('venture', opts.venture);
     }

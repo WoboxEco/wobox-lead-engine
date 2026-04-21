@@ -1,10 +1,10 @@
 import {
   type ApproachType,
   type Channel,
-  createAdminClient,
-  createLogger,
   type DbClient,
   type Venture,
+  createAdminClient,
+  createLogger,
   writeErrorLog,
 } from '@wobox/core';
 import { claude } from '@wobox/integrations';
@@ -85,7 +85,10 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
     ...(latestScore ? { score: latestScore } : {}),
   });
 
-  log.info({ model, approach, channel, promptName, contactName: contact.name }, 'generating message');
+  log.info(
+    { model, approach, channel, promptName, contactName: contact.name },
+    'generating message',
+  );
 
   try {
     const prompt = await loadPrompt('messages', promptName, vars);
@@ -151,7 +154,11 @@ function selectApproach(contact: Contact, totalScore: number | undefined): Appro
   return 'nurture';
 }
 
-function selectPromptName(venture: Venture, vertical: string | undefined, approach: ApproachType): string {
+function selectPromptName(
+  venture: Venture,
+  vertical: string | undefined,
+  approach: ApproachType,
+): string {
   if (venture === 'loop') {
     return `message-loop-${approach.replace('_', '-')}-v1`;
   }
@@ -183,7 +190,8 @@ function buildVars(args: {
   const ig = company.instagram_handle ? `@${company.instagram_handle}` : 'sin IG';
   const followers = company.social_followers ? `${company.social_followers} followers IG` : '';
   const locations = company.locations_count ?? 1;
-  const regionLabel = [company.neighborhood, company.region].filter(Boolean).join(', ') || 'Argentina';
+  const regionLabel =
+    [company.neighborhood, company.region].filter(Boolean).join(', ') || 'Argentina';
 
   const insightParts = [
     `${locations} local${locations !== 1 ? 'es' : ''}`,

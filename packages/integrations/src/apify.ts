@@ -1,29 +1,43 @@
 import { env } from '@wobox/core';
 import pRetry from 'p-retry';
 
-// Apify clients para Google Maps (crawler-google-places) e Instagram (instagram-profile-scraper).
-// TODO: implementar en search-leads-web y enrich-lead.
-
 export interface GoogleMapsSearchParams {
   searchStringsArray: string[];
   locationQuery?: string;
   maxCrawledPlacesPerSearch?: number;
   language?: string;
+  skipClosedPlaces?: boolean;
 }
 
 export interface MapsPlace {
   title: string;
-  address?: string;
-  website?: string;
-  phone?: string;
-  categoryName?: string;
-  totalScore?: number;
-  reviewsCount?: number;
-  location?: { lat: number; lng: number };
+  address?: string | null;
+  neighborhood?: string | null;
+  city?: string | null;
+  street?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  categoryName?: string | null;
+  categories?: string[] | null;
+  totalScore?: number | null;
+  reviewsCount?: number | null;
+  url?: string | null;
+  placeId?: string | null;
+  location?: { lat: number; lng: number } | null;
+  permanentlyClosed?: boolean | null;
+  temporarilyClosed?: boolean | null;
 }
 
-export async function runGoogleMapsSearch(_params: GoogleMapsSearchParams): Promise<MapsPlace[]> {
-  throw new Error('runGoogleMapsSearch not yet implemented');
+export async function runGoogleMapsSearch(params: GoogleMapsSearchParams): Promise<MapsPlace[]> {
+  const actor = env().APIFY_ACTOR_GOOGLE_MAPS;
+  return _runActor<MapsPlace[]>(actor, {
+    searchStringsArray: params.searchStringsArray,
+    ...(params.locationQuery ? { locationQuery: params.locationQuery } : {}),
+    maxCrawledPlacesPerSearch: params.maxCrawledPlacesPerSearch ?? 30,
+    language: params.language ?? 'es',
+    skipClosedPlaces: params.skipClosedPlaces ?? true,
+    scrapePlaceDetailPage: false,
+  });
 }
 
 export interface InstagramProfile {
@@ -47,19 +61,18 @@ export async function _runActor<T>(actorId: string, input: unknown): Promise<T> 
   }
   return pRetry(
     async () => {
-      const res = await fetch(
-        `https://api.apify.com/v2/acts/${actorId.replace('/', '~')}/run-sync-get-dataset-items?token=${e.APIFY_API_TOKEN}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
-        },
-      );
+      const url = `https://api.apify.com/v2/acts/${actorId.replace('/', '~')}/run-sync-get-dataset-items?token=${e.APIFY_API_TOKEN}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
       if (!res.ok) {
-        throw new Error(`Apify ${actorId} returned ${res.status}`);
+        const text = await res.text();
+        throw new Error(`Apify ${actorId} returned ${res.status}: ${text.slice(0, 300)}`);
       }
       return (await res.json()) as T;
     },
-    { retries: 3, minTimeout: 2000, factor: 2 },
+    { retries: 2, minTimeout: 3000, factor: 2 },
   );
 }
