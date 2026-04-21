@@ -78,7 +78,9 @@ program
   .action(generateMessages.run);
 program
   .command('sync-hubspot')
-  .description('[stub] Push meeting_booked a HubSpot')
+  .description('Push meeting_booked a HubSpot + pull closed deals para flywheel')
+  .option('--direction <dir>', 'push | pull | both (default: both)')
+  .option('--since-days <n>', 'Ventana para pull (default: 7)')
   .action(syncHubspot.run);
 program
   .command('show-pipeline')
