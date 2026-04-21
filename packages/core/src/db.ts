@@ -1,6 +1,6 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { env } from './env.js';
+import { type SupabaseClient, createClient } from '@supabase/supabase-js';
 import type { Database } from './database.types.js';
+import { env } from './env.js';
 
 export type DbClient = SupabaseClient<Database>;
 
@@ -17,9 +17,8 @@ export function createAdminClient(): DbClient {
 
 export function createAnonClient(accessToken?: string): DbClient {
   const e = env();
-  const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
   return createClient<Database>(e.SUPABASE_URL, e.SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: headers ? { headers } : undefined,
+    ...(accessToken ? { global: { headers: { Authorization: `Bearer ${accessToken}` } } } : {}),
   });
 }

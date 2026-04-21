@@ -15,15 +15,7 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "baseUrl": ".",
-    "paths": {
-      "@wobox/core": ["packages/core/src/index.ts"],
-      "@wobox/core/*": ["packages/core/src/*"],
-      "@wobox/prompts": ["packages/prompts/src/index.ts"],
-      "@wobox/integrations": ["packages/integrations/src/index.ts"],
-      "@wobox/integrations/*": ["packages/integrations/src/*"]
-    }
+    "sourceMap": true
   },
   "exclude": ["node_modules", "dist", ".next", "build"]
 }

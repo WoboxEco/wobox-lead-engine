@@ -1,4 +1,5 @@
 import {
+  type Venture,
   createAdminClient,
   createLogger,
   isWoboxVenture,
@@ -6,16 +7,20 @@ import {
   scoringModelForVenture,
   woboxScoreSchema,
   writeErrorLog,
-  type Venture,
 } from '@wobox/core';
 import { claude } from '@wobox/integrations';
 import { buildLeadData, loadPrompt } from '@wobox/prompts';
+
+// Default: Haiku. Scoring es clasificacion multi-dimensional con reasoning corto.
+// Override con --model=sonnet si queres validar consistencia en una corrida.
+const DEFAULT_MODEL = 'haiku';
 
 export interface ScoreLeadsOptions {
   venture?: Venture;
   id?: string;
   all?: boolean;
   limit?: string;
+  model?: string;
 }
 
 export async function run(opts: ScoreLeadsOptions): Promise<void> {
@@ -27,6 +32,8 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   }
 
   const limit = Number.parseInt(opts.limit ?? '10', 10);
+  const model = opts.model ?? DEFAULT_MODEL;
+  log.info({ model }, 'using model');
 
   // Query companies target.
   let query = db.from('companies').select('*, contacts(*)').limit(limit);
@@ -52,9 +59,9 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   let failed = 0;
 
   for (const company of companies) {
-    const c = company as Record<string, unknown> & { id: string; venture: Venture };
+    const c = company as unknown as Record<string, unknown> & { id: string; venture: Venture };
     try {
-      await scoreOne(c, db, log);
+      await scoreOne(c, db, log, model);
       ok += 1;
     } catch (err) {
       failed += 1;
@@ -75,6 +82,7 @@ async function scoreOne(
   company: Record<string, unknown> & { id: string; venture: Venture },
   db: ReturnType<typeof createAdminClient>,
   log: ReturnType<typeof createLogger>,
+  model: string | undefined,
 ): Promise<void> {
   const venture = company.venture;
   const scoringModel = scoringModelForVenture(venture);
@@ -91,6 +99,7 @@ async function scoreOne(
       schema: woboxScoreSchema,
       venture,
       operation: `score-${scoringModel}`,
+      ...(model ? { model } : {}),
     });
 
     await persistWoboxScore(db, company.id, scoringModel, score);
@@ -101,6 +110,7 @@ async function scoreOne(
       schema: loopScoreSchema,
       venture,
       operation: `score-${scoringModel}`,
+      ...(model ? { model } : {}),
     });
 
     await persistLoopScore(db, company.id, scoringModel, score);

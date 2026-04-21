@@ -25,7 +25,9 @@ export function verifyCalendlySignature(params: {
   const signature = parts.v1;
   if (!timestamp || !signature) return false;
 
-  const expected = createHmac('sha256', params.signingKey).update(`${timestamp}.${params.rawBody}`).digest('hex');
+  const expected = createHmac('sha256', params.signingKey)
+    .update(`${timestamp}.${params.rawBody}`)
+    .digest('hex');
 
   const a = Buffer.from(expected, 'hex');
   const b = Buffer.from(signature, 'hex');

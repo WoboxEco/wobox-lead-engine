@@ -31,6 +31,9 @@ export async function loadPrompt(
   return rendered;
 }
 
-export function buildLeadData(company: Record<string, unknown>, contacts: Record<string, unknown>[] = []): string {
+export function buildLeadData(
+  company: Record<string, unknown>,
+  contacts: Record<string, unknown>[] = [],
+): string {
   return JSON.stringify({ company, contacts }, null, 2);
 }

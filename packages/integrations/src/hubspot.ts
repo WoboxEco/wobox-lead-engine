@@ -1,4 +1,4 @@
-import { env, type Venture } from '@wobox/core';
+import { type Venture, env } from '@wobox/core';
 import pRetry from 'p-retry';
 
 // HubSpot Private App. Mapping de stages de spec:
@@ -17,7 +17,9 @@ export async function createDeal(_payload: HubSpotDealPayload): Promise<{ id: st
   throw new Error('createDeal not yet implemented');
 }
 
-export async function getClosedDeals(_since: Date): Promise<Array<{ id: string; status: 'won' | 'lost' }>> {
+export async function getClosedDeals(
+  _since: Date,
+): Promise<Array<{ id: string; status: 'won' | 'lost' }>> {
   throw new Error('getClosedDeals not yet implemented');
 }
 

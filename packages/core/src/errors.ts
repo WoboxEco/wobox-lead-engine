@@ -1,13 +1,12 @@
 import type { DbClient } from './db.js';
 
 export class SkillError extends Error {
-  constructor(
-    message: string,
-    public readonly cause?: unknown,
-    public readonly context?: Record<string, unknown>,
-  ) {
-    super(message);
+  public readonly context: Record<string, unknown> | undefined;
+
+  constructor(message: string, cause?: unknown, context?: Record<string, unknown>) {
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = 'SkillError';
+    this.context = context;
   }
 }
 

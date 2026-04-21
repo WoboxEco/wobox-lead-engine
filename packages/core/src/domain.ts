@@ -20,7 +20,15 @@ export type BuyerPersona = (typeof BUYER_PERSONAS)[number];
 export const APPROACH_TYPES = ['warm_intro', 'nurture', 'direct'] as const;
 export type ApproachType = (typeof APPROACH_TYPES)[number];
 
-export const CHANNELS = ['linkedin', 'email', 'whatsapp', 'phone', 'in_person', 'instagram_dm', 'calendly'] as const;
+export const CHANNELS = [
+  'linkedin',
+  'email',
+  'whatsapp',
+  'phone',
+  'in_person',
+  'instagram_dm',
+  'calendly',
+] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 export const SCORING_MODELS = ['scoring-wobox-v1', 'scoring-loop-v1'] as const;

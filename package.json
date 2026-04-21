@@ -8,8 +8,8 @@
     "node": ">=20.11.0"
   },
   "scripts": {
-    "skill": "pnpm --filter @wobox/skills exec skill",
-    "agent": "pnpm --filter @wobox/agents exec agent",
+    "skill": "pnpm --filter @wobox/skills run skill",
+    "agent": "pnpm --filter @wobox/agents run agent",
     "dev": "pnpm --filter @wobox/web dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

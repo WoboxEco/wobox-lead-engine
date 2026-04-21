@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdminClient, createLogger } from '@wobox/core';
@@ -30,9 +30,9 @@ export async function run(): Promise<void> {
       // Instrucción para el usuario: crear exec_sql manualmente la primera vez.
       if (error.message.includes('function') && error.message.includes('exec_sql')) {
         throw new Error(
-          `La funcion exec_sql no existe en tu Supabase. Correr este SQL una vez desde el SQL Editor del dashboard:\n\n` +
-            `CREATE OR REPLACE FUNCTION exec_sql(sql text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE sql; END; $$;\n\n` +
-            `Despues reintentar 'pnpm skill setup-database'.`,
+          'La funcion exec_sql no existe en tu Supabase. Correr este SQL una vez desde el SQL Editor del dashboard:\n\n' +
+            'CREATE OR REPLACE FUNCTION exec_sql(sql text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE sql; END; $$;\n\n' +
+            "Despues reintentar 'pnpm skill setup-database'.",
         );
       }
       throw new Error(`Migration ${file} failed: ${error.message}`);
@@ -42,5 +42,7 @@ export async function run(): Promise<void> {
   }
 
   log.info({ applied: files.length }, 'all migrations applied');
-  log.info('Siguiente paso: ejecutar `pnpm db:types` para regenerar packages/core/src/database.types.ts');
+  log.info(
+    'Siguiente paso: ejecutar `pnpm db:types` para regenerar packages/core/src/database.types.ts',
+  );
 }

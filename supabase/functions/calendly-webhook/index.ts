@@ -36,7 +36,11 @@ async function verifySignature(rawBody: string, signatureHeader: string | null):
     false,
     ['sign'],
   );
-  const signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));
+  const signed = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(`${timestamp}.${rawBody}`),
+  );
   const expected = Array.from(new Uint8Array(signed))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');

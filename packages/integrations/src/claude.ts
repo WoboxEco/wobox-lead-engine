@@ -1,7 +1,20 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, createAdminClient, type Venture } from '@wobox/core';
+import { type Venture, createAdminClient, env } from '@wobox/core';
 import pRetry from 'p-retry';
 import type { ZodSchema } from 'zod';
+
+// Alias cortos para el flag --model en la CLI.
+// Default queda en env().CLAUDE_MODEL (Sonnet 4.5).
+const MODEL_ALIASES: Record<string, string> = {
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-5',
+  opus: 'claude-opus-4-5',
+};
+
+export function resolveModel(modelOrAlias?: string): string {
+  if (!modelOrAlias) return env().CLAUDE_MODEL;
+  return MODEL_ALIASES[modelOrAlias] ?? modelOrAlias;
+}
 
 let client: Anthropic | null = null;
 
@@ -18,11 +31,12 @@ export interface CompleteJsonParams<T> {
   venture?: Venture;
   operation: string;
   maxTokens?: number;
+  model?: string;
 }
 
 export async function completeJson<T>(params: CompleteJsonParams<T>): Promise<T> {
   const c = getClient();
-  const model = env().CLAUDE_MODEL;
+  const model = resolveModel(params.model);
   const maxTokens = params.maxTokens ?? 2048;
 
   const response = await pRetry(
@@ -39,7 +53,8 @@ export async function completeJson<T>(params: CompleteJsonParams<T>): Promise<T>
 
   await trackUsage({
     operation: params.operation,
-    venture: params.venture,
+    model,
+    ...(params.venture ? { venture: params.venture } : {}),
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
   });
@@ -64,9 +79,10 @@ export async function completeText(params: {
   venture?: Venture;
   operation: string;
   maxTokens?: number;
+  model?: string;
 }): Promise<string> {
   const c = getClient();
-  const model = env().CLAUDE_MODEL;
+  const model = resolveModel(params.model);
   const maxTokens = params.maxTokens ?? 1024;
 
   const response = await pRetry(
@@ -83,7 +99,8 @@ export async function completeText(params: {
 
   await trackUsage({
     operation: params.operation,
-    venture: params.venture,
+    model,
+    ...(params.venture ? { venture: params.venture } : {}),
     inputTokens: response.usage.input_tokens,
     outputTokens: response.usage.output_tokens,
   });
@@ -96,6 +113,7 @@ export async function completeText(params: {
 
 async function trackUsage(params: {
   operation: string;
+  model: string;
   venture?: Venture;
   inputTokens: number;
   outputTokens: number;
@@ -104,7 +122,7 @@ async function trackUsage(params: {
     const db = createAdminClient();
     await db.from('api_usage').insert({
       service: 'claude',
-      operation: params.operation,
+      operation: `${params.operation}::${params.model}`,
       credits_used: 0,
       tokens_used: params.inputTokens + params.outputTokens,
       venture: params.venture ?? null,
