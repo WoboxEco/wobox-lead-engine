@@ -82,9 +82,24 @@ program
   .action(syncHubspot.run);
 program
   .command('show-pipeline')
-  .description('[stub] Vista Kanban filtrable')
+  .description('Vista tipo Kanban filtrable por venture/stage/BP/campana/score')
+  .option('--venture <venture>', 'wobox_food | wobox_fashion | loop')
+  .option(
+    '--stage <stage>',
+    'new | enriched | qualified | nurturing | contacted | meeting_booked | discarded',
+  )
+  .option('--bp <BP>', 'BP1..BP6 (solo Loop)')
+  .option('--campaign <uuid>', 'Filtrar por campaign_id')
+  .option('--founder <uuid>', 'Filtrar por assigned_to')
+  .option('--min-score <n>', 'Solo leads con score >= N')
+  .option('--limit <n>', 'Max filas (default: 200)')
   .action(showPipeline.run);
-program.command('show-metrics').description('[stub] KPIs por venture').action(showMetrics.run);
+program
+  .command('show-metrics')
+  .description('KPIs + flywheel: funnel, BP, mensajes, edit rate, reply rate, costos')
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--period <days>', 'Ventana de dias hacia atras (default: 30)')
+  .action(showMetrics.run);
 program
   .command('approve-message')
   .description('Listar / aprobar / editar / enviar / descartar drafts')
