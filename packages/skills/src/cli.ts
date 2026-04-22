@@ -61,7 +61,14 @@ program
   .action(enrichLead.run);
 program
   .command('check-warm-path')
-  .description('[stub] Detecta warm paths via Apollo')
+  .description('Lista qualified leads sin warm-path o marca uno manualmente')
+  .option('--id <uuid>', 'company_id target (omitir para listar)')
+  .option('--path <type>', 'direct | 2nd_degree | none')
+  .option('--connector <name>', 'Quien hace la intro (ej: "Yo", "Juan Perez")')
+  .option('--decision-maker <name>', 'Nombre del decisor en la empresa')
+  .option('--email <email>', 'Email del decisor (opcional pero recomendado)')
+  .option('--role <role>', 'Cargo (ej: "CEO", "Dueno", "Gerente comercial")')
+  .option('--venture <venture>', 'Filtrar listado (default: loop)')
   .action(checkWarmPath.run);
 program
   .command('generate-messages')
