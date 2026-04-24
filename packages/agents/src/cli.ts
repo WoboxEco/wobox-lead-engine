@@ -35,7 +35,10 @@ program
 
 program
   .command('daily-review')
-  .description('[stub] Resumen diario cross-venture')
+  .description('Resumen cross-venture (nuevos, drafts, enviados, meetings, replies)')
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--period <p>', 'Ventana: 24h | 1d | 7d | 1w (default: 1d)')
+  .option('--json', 'Output en JSON')
   .action(dailyReview.run);
 
 program
