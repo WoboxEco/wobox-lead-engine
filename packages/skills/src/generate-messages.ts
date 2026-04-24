@@ -132,7 +132,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
   }
 }
 
-type Contact = Record<string, unknown> & {
+export type Contact = Record<string, unknown> & {
   id: string;
   name: string;
   role?: string;
@@ -148,7 +148,7 @@ function selectContact(contacts: Contact[], preferId?: string): Contact | null {
   return contacts.find((c) => c.is_decision_maker) ?? contacts[0] ?? null;
 }
 
-function selectApproach(contact: Contact, totalScore: number | undefined): ApproachType {
+export function selectApproach(contact: Contact, totalScore: number | undefined): ApproachType {
   if (contact.warm_path === 'direct' || contact.warm_path === '2nd_degree') return 'warm_intro';
   if ((totalScore ?? 0) >= 80) return 'direct';
   return 'nurture';

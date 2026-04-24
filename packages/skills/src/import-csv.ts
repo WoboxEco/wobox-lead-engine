@@ -149,12 +149,12 @@ export async function run(opts: ImportCsvOptions): Promise<void> {
 // CSV parsing
 // ========================
 
-interface ParsedCsv {
+export interface ParsedCsv {
   headers: string[];
   rows: string[][];
 }
 
-function parseCsv(raw: string): ParsedCsv {
+export function parseCsv(raw: string): ParsedCsv {
   const lines = splitCsvLines(raw);
   if (lines.length === 0) return { headers: [], rows: [] };
   const headers = parseCsvLine(lines[0]!).map((h) => h.trim().toLowerCase());
