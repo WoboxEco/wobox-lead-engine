@@ -61,7 +61,14 @@ program
   .option('--limit <n>', 'Max places por query de Apify (default: 30)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
   .action(searchLeadsWeb.run);
-program.command('import-csv').description('[stub] Import bulk desde CSV').action(importCsv.run);
+program
+  .command('import-csv')
+  .description('Bulk import de companies (+contacts opcional) desde CSV')
+  .option('--file <path>', 'Path al CSV (requerido)')
+  .option('--venture <venture>', 'Venture por defecto si el CSV no tiene columna')
+  .option('--dry-run', 'Parsea y valida sin insertar')
+  .option('--update', 'Si la company ya existe, actualiza campos (default: skip)')
+  .action(importCsv.run);
 program
   .command('enrich-lead')
   .description('Instagram enrichment via Apify: followers + posts, new -> enriched')
