@@ -1,6 +1,17 @@
 import { createAdminClient } from '@wobox/core';
+import { changeStage, discardCompany } from './actions';
 
 export const dynamic = 'force-dynamic';
+
+const ALL_STAGES = [
+  'new',
+  'enriched',
+  'qualified',
+  'nurturing',
+  'contacted',
+  'meeting_booked',
+  'discarded',
+];
 
 interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -116,6 +127,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
               <th>Region</th>
               <th>IG</th>
               <th>Warm path</th>
+              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -136,6 +148,54 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                   {r.social_followers ? ` · ${formatFollowers(r.social_followers)}` : ''}
                 </td>
                 <td>{r.warm ?? '-'}</td>
+                <td>
+                  <form
+                    action={changeStage}
+                    style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}
+                  >
+                    <input type="hidden" name="id" value={r.id} />
+                    <select name="stage" defaultValue={r.stage} style={{ fontSize: 12, padding: '2px 4px' }}>
+                      {ALL_STAGES.map((s) => (
+                        <option key={s} value={s}>
+                          {s.replace('_', ' ')}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="submit"
+                      style={{
+                        fontSize: 11,
+                        padding: '2px 8px',
+                        background: '#036',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      OK
+                    </button>
+                  </form>
+                  {r.stage !== 'discarded' ? (
+                    <form action={discardCompany} style={{ display: 'inline', marginLeft: 6 }}>
+                      <input type="hidden" name="id" value={r.id} />
+                      <button
+                        type="submit"
+                        style={{
+                          fontSize: 11,
+                          padding: '2px 8px',
+                          background: '#fff',
+                          color: '#900',
+                          border: '1px solid #900',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        descartar
+                      </button>
+                    </form>
+                  ) : null}
+                </td>
               </tr>
             ))}
           </tbody>
