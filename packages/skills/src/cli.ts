@@ -7,6 +7,7 @@ import * as checkWarmPath from './check-warm-path.js';
 import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
 import * as importCsv from './import-csv.js';
+import * as nurtureSequence from './nurture-sequence.js';
 import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
 import * as searchLeads from './search-leads.js';
@@ -91,6 +92,14 @@ program
   .option('--step <n>', 'Step 1-4 (solo nurture, default: 1)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
   .action(generateMessages.run);
+program
+  .command('nurture-sequence')
+  .description('Genera drafts step 2-4 para companies nurturing segun calendario (2/5/10 dias)')
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--limit <n>', 'Max companies por corrida (default: 50)', (v) => parseInt(v, 10))
+  .option('--dry-run', 'Solo reportar que haria, sin generar')
+  .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
+  .action(nurtureSequence.run);
 program
   .command('sync-hubspot')
   .description('Push meeting_booked a HubSpot + pull closed deals para flywheel')
