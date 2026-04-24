@@ -56,8 +56,12 @@ program
 program.command('import-csv').description('[stub] Import bulk desde CSV').action(importCsv.run);
 program
   .command('enrich-lead')
-  .description('[stub] Instagram + web enrichment (default: haiku)')
-  .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
+  .description('Instagram enrichment via Apify: followers + posts, new -> enriched')
+  .option('--id <uuid>', 'company_id target (omitir para batch)')
+  .option('--all', 'Procesar todas las companies con stage=new sin social_followers')
+  .option('--limit <n>', 'Max companies por corrida (default: 30)', (v) => parseInt(v, 10))
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--force', 'Rescan companies ya enriquecidas')
   .action(enrichLead.run);
 program
   .command('check-warm-path')
