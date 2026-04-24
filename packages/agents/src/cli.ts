@@ -30,7 +30,11 @@ program
 
 program
   .command('nurture-sequence')
-  .description('[stub] Nurture scheduler diario')
+  .description('Corre el scheduler nurture para todas las ventures (o una con --venture)')
+  .option('--venture <venture>', 'Solo una venture')
+  .option('--limit <n>', 'Max companies por venture', (v) => parseInt(v, 10))
+  .option('--dry-run', 'Reporta sin generar')
+  .option('--model <alias>', 'Override modelo Claude')
   .action(nurtureSequence.run);
 
 program
@@ -43,7 +47,10 @@ program
 
 program
   .command('campaign-report')
-  .description('[stub] Analytics por campana')
+  .description('Analytics por campaign: stages, conversion, edit rate, closed won')
+  .option('--campaign-id <uuid>', 'Solo una campaign especifica')
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--json', 'Output en JSON')
   .action(campaignReport.run);
 
 program.parseAsync(process.argv).catch((err) => {
