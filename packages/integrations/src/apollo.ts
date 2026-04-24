@@ -1,63 +1,178 @@
-import { env } from '@wobox/core';
+import { type Venture, createAdminClient, env } from '@wobox/core';
 import pRetry from 'p-retry';
 
-// TODO: completar al implementar search-leads.
-// Este stub documenta la shape esperada.
+export interface ApolloAccount {
+  id: string;
+  name: string;
+  website_url?: string | null;
+  linkedin_url?: string | null;
+  primary_domain?: string | null;
+}
 
-export interface ApolloSearchParams {
-  keywords?: string;
-  industries?: string[];
-  locations?: string[];
-  minEmployees?: number;
-  maxEmployees?: number;
-  page?: number;
+export interface ApolloContact {
+  id: string;
+  name: string;
+  first_name?: string;
+  last_name?: string;
+  title?: string | null;
+  email?: string | null;
+  linkedin_url?: string | null;
+  organization_name?: string | null;
+  owner_id?: string | null;
+  person_id?: string | null;
+}
+
+export interface ApolloPersonTeaser {
+  id: string;
+  first_name: string;
+  last_name_obfuscated?: string;
+  title?: string | null;
+  has_email: boolean;
+  organization?: { name?: string | null } | null;
+}
+
+export interface ApolloPersonFull {
+  id: string;
+  first_name: string;
+  last_name?: string;
+  name: string;
+  title?: string | null;
+  email?: string | null;
+  linkedin_url?: string | null;
+  organization?: { id?: string; name?: string; primary_domain?: string } | null;
+}
+
+export async function searchAccount(domain: string): Promise<ApolloAccount | null> {
+  const clean = normalizeDomain(domain);
+  if (!clean) return null;
+  const res = await apolloFetch<{ accounts: ApolloAccount[] }>('/accounts/search', {
+    q_organization_domains_list: [clean],
+    page: 1,
+    per_page: 5,
+  });
+  const match = res.accounts.find(
+    (a) => a.primary_domain === clean || (a.website_url ?? '').includes(clean),
+  );
+  return match ?? res.accounts[0] ?? null;
+}
+
+export async function findWarmConnections(orgId: string): Promise<ApolloContact[]> {
+  const res = await apolloFetch<{ contacts: ApolloContact[] }>('/contacts/search', {
+    q_organization_ids: [orgId],
+    page: 1,
+    per_page: 25,
+  });
+  return res.contacts ?? [];
+}
+
+export interface SearchDecisionMakersParams {
+  orgId: string;
+  titles?: string[];
   perPage?: number;
 }
 
-export interface ApolloCompany {
-  id: string;
-  name: string;
-  website_url?: string;
-  linkedin_url?: string;
-  estimated_num_employees?: number;
-  industry?: string;
-  city?: string;
-  country?: string;
+export async function searchDecisionMakers(
+  params: SearchDecisionMakersParams,
+): Promise<ApolloPersonTeaser[]> {
+  const titles = params.titles ?? ['CEO', 'Founder', 'Owner', 'Co-Founder', 'Managing Director'];
+  const res = await apolloFetch<{ people: ApolloPersonTeaser[] }>('/mixed_people/api_search', {
+    organization_ids: [params.orgId],
+    person_titles: titles,
+    page: 1,
+    per_page: params.perPage ?? 10,
+  });
+  return res.people ?? [];
 }
 
-export async function searchOrganizations(_params: ApolloSearchParams): Promise<ApolloCompany[]> {
+export interface MatchPersonParams {
+  personId?: string;
+  email?: string;
+  linkedinUrl?: string;
+  firstName?: string;
+  lastName?: string;
+  organizationName?: string;
+  revealPersonalEmails?: boolean;
+  venture?: Venture;
+  operation?: string;
+}
+
+export async function matchPerson(params: MatchPersonParams): Promise<ApolloPersonFull | null> {
+  const body: Record<string, unknown> = {
+    reveal_personal_emails: params.revealPersonalEmails ?? false,
+  };
+  if (params.personId) body.id = params.personId;
+  if (params.email) body.email = params.email;
+  if (params.linkedinUrl) body.linkedin_url = params.linkedinUrl;
+  if (params.firstName) body.first_name = params.firstName;
+  if (params.lastName) body.last_name = params.lastName;
+  if (params.organizationName) body.organization_name = params.organizationName;
+
+  const res = await apolloFetch<{ person: ApolloPersonFull | null }>('/people/match', body);
+
+  await trackUsage({
+    operation: params.operation ?? 'people.match',
+    credits: 1,
+    ...(params.venture ? { venture: params.venture } : {}),
+  });
+
+  return res.person ?? null;
+}
+
+async function trackUsage(p: {
+  operation: string;
+  credits: number;
+  venture?: Venture;
+}): Promise<void> {
+  try {
+    const db = createAdminClient();
+    await db.from('api_usage').insert({
+      service: 'apollo',
+      operation: p.operation,
+      credits_used: p.credits,
+      tokens_used: 0,
+      venture: p.venture ?? null,
+    });
+  } catch {
+    // tracking no debe romper la skill
+  }
+}
+
+function normalizeDomain(input: string): string {
+  const base = input
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '');
+  return (base.split('/')[0] ?? '').split('?')[0] ?? '';
+}
+
+async function apolloFetch<T>(path: string, body: unknown): Promise<T> {
   const e = env();
   if (!e.APOLLO_API_KEY) {
     throw new Error('APOLLO_API_KEY not configured');
   }
-  // TODO: POST {APOLLO_BASE_URL}/mixed_companies/search
-  // Headers: { 'X-Api-Key': e.APOLLO_API_KEY }
-  // Manejar rate limits + tracking de creditos en api_usage.
-  throw new Error('searchOrganizations not yet implemented');
-}
-
-export async function getPeopleAtCompany(_apolloId: string): Promise<unknown[]> {
-  // TODO: /mixed_people/search con organization_ids
-  throw new Error('getPeopleAtCompany not yet implemented');
-}
-
-export async function _apolloFetch<T>(path: string, body: unknown): Promise<T> {
-  const e = env();
   return pRetry(
     async () => {
       const res = await fetch(`${e.APOLLO_BASE_URL}${path}`, {
         method: 'POST',
         headers: {
+          'Cache-Control': 'no-cache',
           'Content-Type': 'application/json',
           'X-Api-Key': e.APOLLO_API_KEY ?? '',
         },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        throw new Error(`Apollo ${path} returned ${res.status}`);
+        const text = await res.text();
+        throw new Error(`Apollo ${path} ${res.status}: ${text.slice(0, 300)}`);
       }
       return (await res.json()) as T;
     },
     { retries: 3, minTimeout: 1000, factor: 2 },
   );
+}
+
+// @deprecated — uso legacy. Preferir apolloFetch + funciones tipadas.
+export async function _apolloFetch<T>(path: string, body: unknown): Promise<T> {
+  return apolloFetch<T>(path, body);
 }

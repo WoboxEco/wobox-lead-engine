@@ -61,7 +61,11 @@ program
   .action(enrichLead.run);
 program
   .command('check-warm-path')
-  .description('Lista qualified leads sin warm-path o marca uno manualmente')
+  .description('Lista qualified leads sin warm-path, detecta con Apollo (--auto), o marca manualmente')
+  .option('--auto', 'Detecta warm paths automaticamente via Apollo API')
+  .option('--auto-limit <n>', 'Max companies a procesar en --auto (default: 10)', (v) => parseInt(v, 10))
+  .option('--auto-min-score <n>', 'Score minimo para gastar credito de reveal (default: 70)', (v) => parseInt(v, 10))
+  .option('--auto-reveal', 'Gastar creditos Apollo para revelar email/linkedin de DMs (default: false)')
   .option('--id <uuid>', 'company_id target (omitir para listar)')
   .option('--path <type>', 'direct | 2nd_degree | none')
   .option('--connector <name>', 'Quien hace la intro (ej: "Yo", "Juan Perez")')
