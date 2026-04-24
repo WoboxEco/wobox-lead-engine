@@ -61,6 +61,8 @@ export async function approveDraft(formData: FormData): Promise<void> {
   const { error } = await db.from('messages').update({ status: 'approved' }).eq('id', id);
   if (error) throw new Error(error.message);
   revalidatePath('/drafts');
+  revalidatePath('/nurture');
+  revalidatePath('/');
 }
 
 export async function discardDraft(formData: FormData): Promise<void> {
@@ -71,6 +73,8 @@ export async function discardDraft(formData: FormData): Promise<void> {
   const { error } = await db.from('messages').update({ status: 'discarded' }).eq('id', id);
   if (error) throw new Error(error.message);
   revalidatePath('/drafts');
+  revalidatePath('/nurture');
+  revalidatePath('/');
 }
 
 export async function saveEditAndApprove(formData: FormData): Promise<void> {
@@ -92,6 +96,8 @@ export async function saveEditAndApprove(formData: FormData): Promise<void> {
   const { error } = await db.from('messages').update(update).eq('id', id);
   if (error) throw new Error(error.message);
   revalidatePath('/drafts');
+  revalidatePath('/nurture');
+  revalidatePath('/');
 }
 
 export async function sendDraft(formData: FormData): Promise<void> {
@@ -138,4 +144,6 @@ export async function sendDraft(formData: FormData): Promise<void> {
   }
 
   revalidatePath('/drafts');
+  revalidatePath('/nurture');
+  revalidatePath('/');
 }

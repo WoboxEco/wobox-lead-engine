@@ -1,4 +1,5 @@
 import { createAdminClient } from '@wobox/core';
+import { approveDraft, discardDraft, sendDraft } from '../drafts/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,7 @@ export default async function NurturePage() {
       <h1>Nurture hoy</h1>
       <p className="subtitle">
         {rows.length} touchpoints · vista{' '}
-        <code className="mono">nurture_today</code> (drafts de nurture pendientes)
+        <code className="mono">nurture_today</code> (drafts pendientes de aprobar/enviar)
       </p>
 
       {rows.length === 0 ? (
@@ -61,6 +62,8 @@ export default async function NurturePage() {
                   <th>Step</th>
                   <th>Approach</th>
                   <th>Channel</th>
+                  <th>Status</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -76,6 +79,33 @@ export default async function NurturePage() {
                       <span className="pill">{r.approach_type}</span>
                     </td>
                     <td>{r.channel}</td>
+                    <td>
+                      <span className={`pill stage-${r.status === 'approved' ? 'nurturing' : 'new'}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td style={{ display: 'flex', gap: 4 }}>
+                      {r.status === 'draft' ? (
+                        <form action={approveDraft}>
+                          <input type="hidden" name="id" value={r.message_id} />
+                          <button type="submit" style={btnStyle('#0a0')}>
+                            Aprobar
+                          </button>
+                        </form>
+                      ) : null}
+                      <form action={sendDraft}>
+                        <input type="hidden" name="id" value={r.message_id} />
+                        <button type="submit" style={btnStyle('#036')}>
+                          Enviado
+                        </button>
+                      </form>
+                      <form action={discardDraft}>
+                        <input type="hidden" name="id" value={r.message_id} />
+                        <button type="submit" style={btnStyle('#900')}>
+                          Descartar
+                        </button>
+                      </form>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -85,4 +115,17 @@ export default async function NurturePage() {
       )}
     </>
   );
+}
+
+function btnStyle(color: string): React.CSSProperties {
+  return {
+    padding: '4px 10px',
+    background: color,
+    color: 'white',
+    border: 'none',
+    borderRadius: 4,
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: 'pointer',
+  };
 }
