@@ -63,6 +63,7 @@ program
   .option('--limit <n>', 'Max companies por corrida (default: 30)', (v) => parseInt(v, 10))
   .option('--venture <venture>', 'Filtrar por venture')
   .option('--force', 'Rescan companies ya enriquecidas')
+  .option('--no-scrape', 'No intentar fetch del website para extraer IG link')
   .action(enrichLead.run);
 program
   .command('check-warm-path')

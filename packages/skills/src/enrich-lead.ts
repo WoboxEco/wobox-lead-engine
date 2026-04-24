@@ -7,6 +7,7 @@ export interface EnrichLeadOptions {
   limit?: number;
   venture?: string;
   force?: boolean;
+  noScrape?: boolean;
 }
 
 type CompanyRow = {
@@ -29,7 +30,10 @@ export async function run(opts: EnrichLeadOptions): Promise<void> {
     return;
   }
 
-  const { resolved, skipped } = resolveHandles(companies);
+  const { resolved, skipped } = await resolveHandles(companies, {
+    scrape: !opts.noScrape,
+    log,
+  });
   if (resolved.length === 0) {
     console.log(`Sin handles IG resolvibles (${skipped.length} skipped):`);
     for (const s of skipped) console.log(`  - ${s.name}: ${s.reason}`);
@@ -137,10 +141,10 @@ interface SkippedTarget {
   reason: string;
 }
 
-function resolveHandles(companies: CompanyRow[]): {
-  resolved: ResolvedTarget[];
-  skipped: SkippedTarget[];
-} {
+async function resolveHandles(
+  companies: CompanyRow[],
+  opts: { scrape: boolean; log: ReturnType<typeof createLogger> },
+): Promise<{ resolved: ResolvedTarget[]; skipped: SkippedTarget[] }> {
   const resolved: ResolvedTarget[] = [];
   const skipped: SkippedTarget[] = [];
 
@@ -154,8 +158,21 @@ function resolveHandles(companies: CompanyRow[]): {
       handle = apify.normalizeInstagramHandle(c.website);
     }
 
+    // Scrape HTML del website si tenemos dominio real (no IG) y scrape activo.
+    if (
+      !handle &&
+      opts.scrape &&
+      c.website &&
+      !/(instagram|facebook|tiktok|twitter|x|linkedin)\.com/i.test(c.website)
+    ) {
+      handle = await scrapeInstagramFromWebsite(c.website, opts.log);
+    }
+
     if (!handle) {
-      skipped.push({ name: c.name, reason: 'sin instagram_handle y website no es IG' });
+      skipped.push({
+        name: c.name,
+        reason: c.website ? `website sin IG link detectable (${c.website})` : 'sin instagram_handle y sin website',
+      });
       continue;
     }
 
@@ -163,4 +180,70 @@ function resolveHandles(companies: CompanyRow[]): {
   }
 
   return { resolved, skipped };
+}
+
+const SCRAPE_TIMEOUT_MS = 8000;
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+
+async function scrapeInstagramFromWebsite(
+  website: string,
+  log: ReturnType<typeof createLogger>,
+): Promise<string | null> {
+  const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), SCRAPE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8',
+      },
+    });
+    if (!res.ok) {
+      log.debug({ website, status: res.status }, 'scrape non-2xx');
+      return null;
+    }
+    const html = await res.text();
+    return extractInstagramHandle(html);
+  } catch (err) {
+    log.debug({ website, err: String(err) }, 'scrape failed');
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Busca el primer link IG plausible, excluyendo handles genericos de plataforma.
+const IG_HANDLE_BLOCKLIST = new Set([
+  'share',
+  'explore',
+  'reel',
+  'reels',
+  'tv',
+  'p',
+  'direct',
+  'accounts',
+  'developer',
+  'about',
+  'privacy',
+]);
+
+export function extractInstagramHandle(html: string): string | null {
+  const regex = /instagram\.com\/([a-zA-Z0-9._]+)(?:[\/?#"'\s]|$)/g;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(html)) !== null) {
+    const cand = m[1]?.toLowerCase();
+    if (!cand) continue;
+    if (IG_HANDLE_BLOCKLIST.has(cand)) continue;
+    if (cand.length < 2 || cand.length > 30) continue;
+    if (seen.has(cand)) continue;
+    seen.add(cand);
+    return cand;
+  }
+  return null;
 }
