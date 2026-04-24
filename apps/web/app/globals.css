@@ -1,0 +1,147 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #111;
+  background: #fafafa;
+}
+
+a {
+  color: #0060c0;
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+h1 {
+  font-size: 24px;
+  margin: 0 0 4px;
+}
+
+h2 {
+  font-size: 18px;
+  margin: 32px 0 12px;
+}
+
+.subtitle {
+  color: #666;
+  margin: 0 0 24px;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-bottom: 32px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.card .label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin: 0 0 6px;
+}
+
+.card .value {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+th, td {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+
+th {
+  background: #f7f7f7;
+  font-weight: 600;
+  color: #555;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+tr:last-child td { border-bottom: none; }
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #eef;
+  color: #225;
+}
+.pill.stage-new { background: #eef; color: #225; }
+.pill.stage-enriched { background: #def; color: #036; }
+.pill.stage-qualified { background: #dfd; color: #060; }
+.pill.stage-nurturing { background: #fed; color: #630; }
+.pill.stage-contacted { background: #fef; color: #606; }
+.pill.stage-meeting_booked { background: #dfdfff; color: #224; }
+.pill.stage-discarded { background: #eee; color: #666; }
+
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; }
+
+.score-high { color: #060; font-weight: 600; }
+.score-mid  { color: #a60; }
+.score-low  { color: #900; }
+
+.draft-body {
+  white-space: pre-wrap;
+  max-width: 600px;
+  color: #333;
+}
+
+.empty {
+  padding: 32px;
+  text-align: center;
+  color: #888;
+  background: #fff;
+  border: 1px dashed #ddd;
+  border-radius: 8px;
+}
+
+nav.top {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e5e5;
+  font-size: 13px;
+}
