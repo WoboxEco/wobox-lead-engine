@@ -1,3 +1,4 @@
+export * as healthCheck from './health-check.js';
 export * as searchLeadsWeb from './search-leads-web.js';
 export * as enrichLead from './enrich-lead.js';
 export * as scoreLeads from './score-leads.js';

@@ -6,6 +6,7 @@ import * as approveMessage from './approve-message.js';
 import * as checkWarmPath from './check-warm-path.js';
 import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
+import * as healthCheck from './health-check.js';
 import * as importCsv from './import-csv.js';
 import * as nurtureSequence from './nurture-sequence.js';
 import * as scoreLeads from './score-leads.js';
@@ -24,6 +25,12 @@ program
   .command('setup-database')
   .description('Corre migrations contra Supabase')
   .action(setupDatabase.run);
+
+program
+  .command('health-check')
+  .description('Valida env vars + auth contra Supabase/Apollo/Apify/HubSpot')
+  .option('--skip-net', 'Solo validar env schema, sin llamadas de red')
+  .action(healthCheck.run);
 
 program
   .command('score-leads')
