@@ -33,5 +33,5 @@ pnpm-debug.log*
 # Coverage
 coverage/
 
-# Generated types (regenerable)
-packages/core/src/database.types.ts
+# database.types.ts NO se ignora: el placeholder se trackea (necesario en
+# Vercel build). Para regenerar contra Supabase: pnpm db:types.
