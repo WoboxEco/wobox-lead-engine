@@ -134,11 +134,21 @@ CALENDLY_SIGNING_KEY                                           edge function
 
 ## Edge Function — Calendly webhook
 
-Deployada en `supabase/functions/calendly-webhook/index.ts`. Verifica HMAC SHA-256, matchea contacto por email, transiciona `stage → meeting_booked` y crea `interaction type='meeting'`. Configurar el webhook apuntando a:
+Deployada en `supabase/functions/calendly-webhook/index.ts`. Verifica HMAC SHA-256, matchea contacto por email, transiciona `stage → meeting_booked` y crea `interaction type='meeting'`. Endpoint en producción:
 
 ```
-https://<project>.supabase.co/functions/v1/calendly-webhook
+https://bzlcewjkxifuexuhafwx.supabase.co/functions/v1/calendly-webhook
 ```
+
+**Importante — Calendly Free no soporta webhooks** (verificado 2026-04: la API responde 403 "Please upgrade your Calendly account to Standard" al crear `webhook_subscriptions`). Mientras estemos en Free:
+
+- El founder marca manualmente `stage = meeting_booked` desde [/pipeline](apps/web/app/pipeline/page.tsx) cuando un lead acepta una reunión
+- Eso dispara la transición igual; sync-hubspot push lo lleva a HubSpot en la próxima corrida
+
+Para activarlo automático cuando upgrades a Standard:
+1. Crear PAT en https://calendly.com/integrations/api_webhooks con scopes `webhooks:read+write`, `users:read`, `scheduled_events:read`
+2. `POST https://api.calendly.com/webhook_subscriptions` con `url`, `events: ["invitee.created"]`, `organization`, `user`, `scope: "user"`
+3. Setear `CALENDLY_SIGNING_KEY` (de la respuesta) como secret de la Edge Function en Supabase.
 
 ## Cómo agregar
 
