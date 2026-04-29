@@ -1,0 +1,36 @@
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { isAllowedEmail } from './lib/auth/whitelist';
+import { updateSupabaseSession } from './lib/supabase/middleware';
+
+const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/auth/forbidden'];
+
+function isPublic(pathname: string) {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const { response, user } = await updateSupabaseSession(request);
+
+  if (isPublic(pathname)) return response;
+
+  if (!user) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
+  if (!isAllowedEmail(user.email)) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/auth/forbidden';
+    return NextResponse.redirect(url);
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+};
