@@ -132,6 +132,25 @@ CALENDLY_SIGNING_KEY                                           edge function
 
 `health-check` te dice cuál falta.
 
+## Deployment (estado 2026-04-29)
+
+| Pieza | Estado | Detalle |
+|-------|--------|---------|
+| Repo GitHub | Activo | branch `main` |
+| Dashboard Next.js | Live en Vercel | https://wobox-lead-engine-web.vercel.app |
+| Auth dashboard | Activo | Google OAuth + whitelist hardcoded en [apps/web/lib/auth/whitelist.ts](apps/web/lib/auth/whitelist.ts) |
+| Edge Function Calendly | Active en Supabase | `/functions/v1/calendly-webhook` |
+| pg_cron | 2 jobs activos | `reactivate-discarded` (lunes 09:00 UTC), `stale-contacted` (diario 10:00 UTC) |
+| Webhook Calendly auto | Bloqueado | Free plan no permite API webhooks (workaround manual desde /pipeline) |
+
+## Pendientes opcionales
+
+1. **Cron externo para `nurture-sequence` y `daily-review`** — hoy se corren manuales desde CLI.
+   - GitHub Actions con cron diario que ejecute `pnpm skill nurture-sequence` (gratis, fácil)
+   - Vercel Cron Functions (requiere exponer endpoint HTTP en `apps/web`)
+2. **Upgrade Calendly Standard** — desbloquea webhooks automáticos (~10 min de wiring siguiendo los pasos de abajo).
+3. **Revocar PAT de Calendly** que se expuso en chat — generar uno nuevo cuando se haga el upgrade.
+
 ## Edge Function — Calendly webhook
 
 Deployada en `supabase/functions/calendly-webhook/index.ts`. Verifica HMAC SHA-256, matchea contacto por email, transiciona `stage → meeting_booked` y crea `interaction type='meeting'`. Endpoint en producción:
