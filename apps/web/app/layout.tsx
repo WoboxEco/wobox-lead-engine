@@ -21,6 +21,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <a href="/drafts">Drafts</a>
             <a href="/nurture">Nurture hoy</a>
             <a href="/campaigns">Campaigns</a>
+            <a href="/daily-review">Daily review</a>
             {userEmail ? (
               <span
                 style={{
