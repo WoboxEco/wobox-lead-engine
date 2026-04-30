@@ -1,10 +1,5 @@
 import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
-import {
-  checkWarmPath,
-  enrichLead,
-  scoreLeads,
-  searchLeadsWeb,
-} from '@wobox/skills';
+import { checkWarmPath, enrichLead, scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
 
 export interface FullProspectingOptions {
   venture?: string;
@@ -42,25 +37,47 @@ export async function run(opts: FullProspectingOptions): Promise<void> {
   const pre = await snapshot(db, venture);
   printSnapshot('Pre', pre);
 
-  // Fase 1: search-leads-web (solo loop por ahora, usa Apify Maps)
-  if (!opts.skipSearch && venture === 'loop' && opts.subsector) {
+  // Fase 1: source de leads — switch segun venture.
+  //   - loop + subsector  -> Apify Maps (search-leads-web)
+  //   - wobox_food/fashion -> Apollo (search-leads)
+  //   - loop sin subsector -> saltado (no hay path Apollo default para Loop aca)
+  if (!opts.skipSearch) {
     const phase = timer();
-    console.log(`\n[1/4] search-leads-web (subsector=${opts.subsector}, city=${opts.city ?? 'Buenos Aires'})`);
-    try {
-      await searchLeadsWeb.run({
-        subsector: opts.subsector,
-        ...(opts.city ? { city: opts.city } : {}),
-        ...(opts.neighborhood ? { neighborhood: opts.neighborhood } : {}),
-        ...(opts.campaign ? { campaign: opts.campaign } : {}),
-        limit: String(limit),
-        ...(opts.model ? { model: opts.model } : {}),
-      });
-    } catch (err) {
-      log.error({ err: String(err) }, 'search-leads-web failed');
+    if (venture === 'loop' && opts.subsector) {
+      console.log(
+        `\n[1/4] search-leads-web via Apify Maps (subsector=${opts.subsector}, city=${opts.city ?? 'Buenos Aires'})`,
+      );
+      try {
+        await searchLeadsWeb.run({
+          subsector: opts.subsector,
+          ...(opts.city ? { city: opts.city } : {}),
+          ...(opts.neighborhood ? { neighborhood: opts.neighborhood } : {}),
+          ...(opts.campaign ? { campaign: opts.campaign } : {}),
+          limit: String(limit),
+          ...(opts.model ? { model: opts.model } : {}),
+        });
+      } catch (err) {
+        log.error({ err: String(err) }, 'search-leads-web failed');
+      }
+      console.log(`[1/4] hecho en ${phase()}s`);
+    } else if (venture === 'wobox_food' || venture === 'wobox_fashion') {
+      console.log(`\n[1/4] search-leads via Apollo (venture=${venture}, limit=${limit})`);
+      try {
+        await searchLeads.run({
+          venture,
+          limit: String(limit),
+          ...(opts.campaign ? { campaign: opts.campaign } : {}),
+          ...(opts.model ? { model: opts.model } : {}),
+        });
+      } catch (err) {
+        log.error({ err: String(err) }, 'search-leads failed');
+      }
+      console.log(`[1/4] hecho en ${phase()}s`);
+    } else {
+      console.log('\n[1/4] search: saltado (loop sin --subsector; usar --subsector para Apify)');
     }
-    console.log(`[1/4] hecho en ${phase()}s`);
   } else {
-    console.log('\n[1/4] search-leads-web: saltado' + (opts.skipSearch ? ' (--skip-search)' : !opts.subsector ? ' (sin --subsector)' : ''));
+    console.log('\n[1/4] search: saltado (--skip-search)');
   }
 
   // Fase 2: enrich-lead

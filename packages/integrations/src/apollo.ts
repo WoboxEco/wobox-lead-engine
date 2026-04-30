@@ -9,6 +9,70 @@ export interface ApolloAccount {
   primary_domain?: string | null;
 }
 
+export interface ApolloOrganization {
+  id: string;
+  name: string;
+  website_url?: string | null;
+  linkedin_url?: string | null;
+  primary_domain?: string | null;
+  industry?: string | null;
+  estimated_num_employees?: number | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+}
+
+export interface SearchOrganizationsParams {
+  industries?: string[];
+  excludeIndustries?: string[];
+  locations?: string[];
+  employeeRanges?: string[]; // e.g. ["11,50", "51,200"]
+  keywords?: string;
+  page?: number;
+  perPage?: number;
+}
+
+export interface SearchOrganizationsResult {
+  organizations: ApolloOrganization[];
+  page: number;
+  totalPages: number;
+  totalEntries: number;
+}
+
+export async function searchOrganizations(
+  params: SearchOrganizationsParams,
+): Promise<SearchOrganizationsResult> {
+  const body: Record<string, unknown> = {
+    page: params.page ?? 1,
+    per_page: params.perPage ?? 25,
+  };
+  if (params.industries?.length) body.q_organization_industries = params.industries;
+  if (params.excludeIndustries?.length) {
+    body.not_q_organization_industries = params.excludeIndustries;
+  }
+  if (params.locations?.length) body.organization_locations = params.locations;
+  if (params.employeeRanges?.length) {
+    body.organization_num_employees_ranges = params.employeeRanges;
+  }
+  if (params.keywords) body.q_keywords = params.keywords;
+
+  const res = await apolloFetch<{
+    organizations?: ApolloOrganization[];
+    accounts?: ApolloOrganization[];
+    pagination?: { page?: number; total_pages?: number; total_entries?: number };
+  }>('/mixed_companies/search', body);
+
+  // Apollo a veces devuelve `accounts` en lugar de `organizations` segun el plan/endpoint.
+  const organizations = res.organizations ?? res.accounts ?? [];
+
+  return {
+    organizations,
+    page: res.pagination?.page ?? params.page ?? 1,
+    totalPages: res.pagination?.total_pages ?? 1,
+    totalEntries: res.pagination?.total_entries ?? organizations.length,
+  };
+}
+
 export interface ApolloContact {
   id: string;
   name: string;

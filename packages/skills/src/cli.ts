@@ -48,8 +48,19 @@ program
 
 program
   .command('search-leads')
-  .description('[stub] Apollo search para Wobox + cadenas Loop (default: haiku)')
-  .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
+  .description('Apollo organizations search para Wobox food/fashion + Loop cadenas')
+  .option('--venture <venture>', 'wobox_food | wobox_fashion | loop (REQUIRED)')
+  .option('--limit <n>', 'Max orgs por corrida (default: 25, Apollo per_page max)')
+  .option('--industries <csv>', 'Override industries (csv). Default segun venture.')
+  .option(
+    '--employee-ranges <csv>',
+    'Override rangos de empleados, separados por ; (ej: "11,50;51,200")',
+  )
+  .option('--exclude-industries <csv>', 'Override exclusiones (csv)')
+  .option('--region <name>', 'Override location (default: Argentina)')
+  .option('--keywords <text>', 'Free text adicional')
+  .option('--campaign <name>', 'Asociar leads a una campana (se crea si no existe)')
+  .option('--model <alias>', 'Override modelo (no usado actualmente, mantenido por parity)')
   .action(searchLeads.run);
 program
   .command('search-leads-web')
@@ -74,18 +85,27 @@ program
   .description('Instagram enrichment via Apify: followers + posts, new -> enriched')
   .option('--id <uuid>', 'company_id target (omitir para batch)')
   .option('--all', 'Procesar todas las companies con stage=new sin social_followers')
-  .option('--limit <n>', 'Max companies por corrida (default: 30)', (v) => parseInt(v, 10))
+  .option('--limit <n>', 'Max companies por corrida (default: 30)', (v) => Number.parseInt(v, 10))
   .option('--venture <venture>', 'Filtrar por venture')
   .option('--force', 'Rescan companies ya enriquecidas')
   .option('--no-scrape', 'No intentar fetch del website para extraer IG link')
   .action(enrichLead.run);
 program
   .command('check-warm-path')
-  .description('Lista qualified leads sin warm-path, detecta con Apollo (--auto), o marca manualmente')
+  .description(
+    'Lista qualified leads sin warm-path, detecta con Apollo (--auto), o marca manualmente',
+  )
   .option('--auto', 'Detecta warm paths automaticamente via Apollo API')
-  .option('--auto-limit <n>', 'Max companies a procesar en --auto (default: 10)', (v) => parseInt(v, 10))
-  .option('--auto-min-score <n>', 'Score minimo para gastar credito de reveal (default: 70)', (v) => parseInt(v, 10))
-  .option('--auto-reveal', 'Gastar creditos Apollo para revelar email/linkedin de DMs (default: false)')
+  .option('--auto-limit <n>', 'Max companies a procesar en --auto (default: 10)', (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option('--auto-min-score <n>', 'Score minimo para gastar credito de reveal (default: 70)', (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option(
+    '--auto-reveal',
+    'Gastar creditos Apollo para revelar email/linkedin de DMs (default: false)',
+  )
   .option('--id <uuid>', 'company_id target (omitir para listar)')
   .option('--path <type>', 'direct | 2nd_degree | none')
   .option('--connector <name>', 'Quien hace la intro (ej: "Yo", "Juan Perez")')
@@ -111,7 +131,7 @@ program
   .command('nurture-sequence')
   .description('Genera drafts step 2-4 para companies nurturing segun calendario (2/5/10 dias)')
   .option('--venture <venture>', 'Filtrar por venture')
-  .option('--limit <n>', 'Max companies por corrida (default: 50)', (v) => parseInt(v, 10))
+  .option('--limit <n>', 'Max companies por corrida (default: 50)', (v) => Number.parseInt(v, 10))
   .option('--dry-run', 'Solo reportar que haria, sin generar')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
   .action(nurtureSequence.run);
