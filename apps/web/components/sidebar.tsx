@@ -6,9 +6,13 @@ import {
   LayoutDashboard,
   LogOut,
   Megaphone,
+  Moon,
   Sparkles,
+  Sun,
 } from 'lucide-react';
 import Link from 'next/link';
+import { toggleTheme } from '../app/theme/actions';
+import type { Theme } from '../app/theme/actions';
 
 interface NavItem {
   href: string;
@@ -39,7 +43,7 @@ const NAV_OPS: NavItem[] = [
   { href: '/campaigns', label: 'Campaigns', icon: Megaphone, description: 'Iniciativas activas' },
 ];
 
-export function Sidebar({ userEmail }: { userEmail: string | null }) {
+export function Sidebar({ userEmail, theme }: { userEmail: string | null; theme: Theme }) {
   return (
     <aside className="hidden md:flex md:flex-col w-60 shrink-0 border-r border-[var(--border)] bg-[var(--surface)] sticky top-0 h-screen">
       <div className="px-5 py-6 border-b border-[var(--border)]">
@@ -60,12 +64,22 @@ export function Sidebar({ userEmail }: { userEmail: string | null }) {
       </nav>
 
       {userEmail ? (
-        <div className="border-t border-[var(--border)] px-3 py-3">
+        <div className="border-t border-[var(--border)] px-3 py-3 space-y-1">
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-[var(--surface-elevated)]">
             <CircleUser size={18} className="text-muted shrink-0" />
             <p className="text-[12px] text-muted-strong truncate flex-1" title={userEmail}>
               {userEmail}
             </p>
+            <form action={toggleTheme} className="shrink-0">
+              <button
+                type="submit"
+                className="text-muted hover:text-[var(--foreground)] transition-colors"
+                aria-label={theme === 'dark' ? 'Cambiar a claro' : 'Cambiar a oscuro'}
+                title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+              >
+                {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
+            </form>
             <form action="/auth/signout" method="post" className="shrink-0">
               <button
                 type="submit"
@@ -106,7 +120,13 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
   );
 }
 
-export function MobileTopbar({ userEmail }: { userEmail: string | null }) {
+export function MobileTopbar({
+  userEmail,
+  theme,
+}: {
+  userEmail: string | null;
+  theme: Theme;
+}) {
   return (
     <header className="md:hidden sticky top-0 z-10 bg-[var(--surface)] border-b border-[var(--border)] px-4 h-12 flex items-center justify-between">
       <Link href="/" className="flex items-center gap-2">
@@ -116,11 +136,22 @@ export function MobileTopbar({ userEmail }: { userEmail: string | null }) {
         <span className="text-[13px] font-semibold tracking-tight">Wobox</span>
       </Link>
       {userEmail ? (
-        <form action="/auth/signout" method="post">
-          <button type="submit" className="text-muted" aria-label="Salir">
-            <LogOut size={16} />
-          </button>
-        </form>
+        <div className="flex items-center gap-3">
+          <form action={toggleTheme}>
+            <button
+              type="submit"
+              className="text-muted"
+              aria-label={theme === 'dark' ? 'Cambiar a claro' : 'Cambiar a oscuro'}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+          </form>
+          <form action="/auth/signout" method="post">
+            <button type="submit" className="text-muted" aria-label="Salir">
+              <LogOut size={16} />
+            </button>
+          </form>
+        </div>
       ) : null}
     </header>
   );

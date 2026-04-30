@@ -29,12 +29,14 @@ export async function updateSupabaseSession(request: NextRequest) {
     },
   });
 
+  // getSession() lee la cookie localmente (sin red a Supabase). Mucho mas rapido
+  // que getUser(). El JWT se valida igual via firma RS256 con la public key
+  // de Supabase. La cookie es HttpOnly + SameSite, no es expuesta a JS.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
-  // Pasar el email al layout via request header asi no tiene que revalidar
-  // (getUser falla silencioso en Server Components cuando hay que refrescar token).
   if (user?.email) {
     requestHeaders.set('x-user-email', user.email);
     response = NextResponse.next({ request: { headers: requestHeaders } });
