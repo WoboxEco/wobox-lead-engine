@@ -24,6 +24,114 @@ const VALID_VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop'])
 const DEFAULT_STAGE = 'qualified';
 const SKIP_LIFECYCLE = new Set(['customer', 'subscriber', 'evangelist']);
 
+// Heuristica de venture por nombre. Match en orden: loop -> wobox_food -> wobox_fashion.
+// Si nada matchea, cae al --venture default.
+const VENTURE_KEYWORDS: Array<{ venture: Venture; keywords: string[] }> = [
+  {
+    venture: 'loop',
+    keywords: [
+      'cafe',
+      'café',
+      'cafeteria',
+      'cafetería',
+      'panaderia',
+      'panadería',
+      'heladeria',
+      'heladería',
+      'rotiseria',
+      'rotisería',
+      'almacen',
+      'almacén',
+      'dietetica',
+      'dietética',
+      'pasteleria',
+      'pastelería',
+      'pizzeria',
+      'pizzería',
+      'parrilla',
+      'restaurant',
+      'resto',
+      'bistro',
+      'sushi',
+      'burger',
+      'wellness',
+      'spa',
+      'yoga',
+      'pilates',
+      'gym',
+      'gimnasio',
+      'crossfit',
+      'studio',
+      'estudio de',
+      'peluqueria',
+      'peluquería',
+      'barber',
+      'estetica',
+      'estética',
+      'manicure',
+      'manicuría',
+      'specialty coffee',
+      'coffee',
+      'tea',
+      'té',
+      'eco tienda',
+      'ecotienda',
+      'almacen natural',
+      'tienda natural',
+    ],
+  },
+  {
+    venture: 'wobox_fashion',
+    keywords: [
+      'indumentaria',
+      'moda',
+      'ropa',
+      'vestimenta',
+      'vestido',
+      'calzado',
+      'fashion',
+      'apparel',
+      'shoes',
+      'jeans',
+      'lenceria',
+      'lencería',
+      'accesorios',
+      'sastreria',
+      'sastrería',
+      'textil',
+    ],
+  },
+  {
+    venture: 'wobox_food',
+    keywords: [
+      'distribuidora',
+      'distribuidor',
+      'mayorista',
+      'frigorifico',
+      'frigorífico',
+      'cooperativa',
+      'importadora',
+      'industria alimenticia',
+      'alimentos s.a',
+      'alimentos sa',
+      'alimentos srl',
+      'molino',
+      'lacteos',
+      'lácteos',
+      'agroindustria',
+    ],
+  },
+];
+
+function guessVentureFromName(name: string | null | undefined): Venture | null {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  for (const { venture, keywords } of VENTURE_KEYWORDS) {
+    if (keywords.some((kw) => lower.includes(kw))) return venture;
+  }
+  return null;
+}
+
 export async function run(opts: ImportFromHubspotOptions): Promise<void> {
   const log = createLogger('import-from-hubspot');
   const db = createAdminClient();
@@ -65,6 +173,13 @@ export async function run(opts: ImportFromHubspotOptions): Promise<void> {
   const updated = 0;
   let contactsAdded = 0;
   let withoutVenture = 0;
+  const ventureBreakdown: Record<Venture, number> = {
+    wobox_food: 0,
+    wobox_fashion: 0,
+    loop: 0,
+  };
+  let matchedByHeuristic = 0;
+  let matchedByFallback = 0;
 
   try {
     for await (const hsCompany of hubspot.iterateAllCompanies()) {
@@ -87,16 +202,34 @@ export async function run(opts: ImportFromHubspotOptions): Promise<void> {
         continue;
       }
 
-      const venture = hsCompany.venture ?? fallbackVenture;
+      // Resolucion de venture (orden de prioridad):
+      //   1. Property venture en HubSpot (si la usaste)
+      //   2. Heuristica por nombre (cafe -> loop, distribuidora -> wobox_food, etc.)
+      //   3. --venture flag como fallback
+      let venture: Venture | null = hsCompany.venture;
+      let source: 'hubspot' | 'heuristic' | 'fallback' = 'hubspot';
+      if (!venture) {
+        const guessed = guessVentureFromName(hsCompany.name);
+        if (guessed) {
+          venture = guessed;
+          source = 'heuristic';
+          matchedByHeuristic++;
+        } else if (fallbackVenture) {
+          venture = fallbackVenture;
+          source = 'fallback';
+          matchedByFallback++;
+        }
+      }
       if (!venture) {
         withoutVenture++;
         log.warn(
           { name: hsCompany.name, hubspotId: hsCompany.id },
-          'company sin venture (ni en HubSpot ni --venture), skip',
+          'company sin venture (HubSpot vacio + heuristica fallo + sin --venture), skip',
         );
         skipped++;
         continue;
       }
+      ventureBreakdown[venture]++;
 
       const existing = existingByHubspotId.get(hsCompany.id);
       if (existing) {
@@ -107,7 +240,7 @@ export async function run(opts: ImportFromHubspotOptions): Promise<void> {
 
       if (dryRun) {
         console.log(
-          `[DRY] would insert: ${hsCompany.name} (venture=${venture}, hubspot_id=${hsCompany.id})`,
+          `[DRY] ${hsCompany.name} → venture=${venture} (${source}) hubspot_id=${hsCompany.id}`,
         );
         inserted++;
         continue;
@@ -160,6 +293,9 @@ export async function run(opts: ImportFromHubspotOptions): Promise<void> {
 
   console.log(
     `\nimport-from-hubspot done: processed=${processed} inserted=${inserted} updated=${updated} skipped=${skipped} contacts=${contactsAdded} sin_venture=${withoutVenture}${dryRun ? ' (DRY-RUN)' : ''}`,
+  );
+  console.log(
+    `  asignacion: heuristica=${matchedByHeuristic} fallback=${matchedByFallback} | breakdown: loop=${ventureBreakdown.loop} food=${ventureBreakdown.wobox_food} fashion=${ventureBreakdown.wobox_fashion}`,
   );
 }
 

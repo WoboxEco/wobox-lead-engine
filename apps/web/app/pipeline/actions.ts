@@ -13,6 +13,8 @@ const VALID_STAGES = new Set([
   'discarded',
 ]);
 
+const VALID_VENTURES = new Set(['wobox_food', 'wobox_fashion', 'loop']);
+
 export async function changeStage(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
   const stage = String(formData.get('stage') ?? '');
@@ -23,6 +25,23 @@ export async function changeStage(formData: FormData): Promise<void> {
   const { error } = await db
     .from('companies')
     .update({ stage, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath('/pipeline');
+  revalidatePath('/');
+}
+
+export async function changeVenture(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') ?? '');
+  const venture = String(formData.get('venture') ?? '');
+  if (!id) throw new Error('missing id');
+  if (!VALID_VENTURES.has(venture)) throw new Error(`venture invalido: ${venture}`);
+
+  const db = createAdminClient();
+  const { error } = await db
+    .from('companies')
+    .update({ venture, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw new Error(error.message);
 

@@ -2,6 +2,7 @@ import { createAdminClient } from '@wobox/core';
 import { AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
 import { changeStage, discardCompany } from './actions';
+import { VentureSelect } from './venture-select';
 
 export const dynamic = 'force-dynamic';
 
@@ -191,7 +192,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-muted-strong">
-                      {VENTURE_LABELS[r.venture] ?? r.venture}
+                      <VentureSelect companyId={r.id} defaultValue={r.venture} />
                       {r.buyer_persona ? (
                         <span className="text-muted"> · {r.buyer_persona}</span>
                       ) : null}
