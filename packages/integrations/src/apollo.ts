@@ -23,10 +23,21 @@ export interface ApolloOrganization {
 }
 
 export interface SearchOrganizationsParams {
+  /**
+   * Industry keyword tags. Se mapea a `q_organization_keyword_tags` (text matching).
+   * Apollo NO acepta nombres de industria via `q_organization_industries` — ese campo
+   * no existe en la API. Para precision real hay que usar `industryTagIds`.
+   */
   industries?: string[];
   excludeIndustries?: string[];
+  /**
+   * IDs internos de Apollo (ej "5567cdb27369644d39040000"). Mas preciso que keyword tags.
+   * Si se pasan, anula `industries` (Apollo aplica este filtro como hard match).
+   */
+  industryTagIds?: string[];
   locations?: string[];
   employeeRanges?: string[]; // e.g. ["11,50", "51,200"]
+  /** General text query (matches name, description, etc.) */
   keywords?: string;
   page?: number;
   perPage?: number;
@@ -46,9 +57,16 @@ export async function searchOrganizations(
     page: params.page ?? 1,
     per_page: params.perPage ?? 25,
   };
-  if (params.industries?.length) body.q_organization_industries = params.industries;
+
+  // Filtro de industria: tag IDs son hard match, keyword tags son text-match (mas laxo).
+  // Si hay tag IDs, usamos solo eso. Si no, mandamos keyword tags.
+  if (params.industryTagIds?.length) {
+    body.organization_industry_tag_ids = params.industryTagIds;
+  } else if (params.industries?.length) {
+    body.q_organization_keyword_tags = params.industries;
+  }
   if (params.excludeIndustries?.length) {
-    body.not_q_organization_industries = params.excludeIndustries;
+    body.not_q_organization_keyword_tags = params.excludeIndustries;
   }
   if (params.locations?.length) body.organization_locations = params.locations;
   if (params.employeeRanges?.length) {

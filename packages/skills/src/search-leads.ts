@@ -31,50 +31,77 @@ const DECISION_MAKER_TITLES = [
 ];
 
 // Defaults por venture: ajustables por CLI con flags --industries, --employee-ranges, etc.
+//
+// IMPORTANTE: estos van a `q_organization_keyword_tags` (text-match, no hard filter).
+// Apollo no acepta `q_organization_industries`. Si querés hard match, pasale tag IDs
+// via flag (no implementado en CLI todavia, requiere lookup separado).
+//
+// `keywords` se manda a `q_keywords` (general text) para reforzar la senal — sirve
+// mucho cuando los keyword_tags solos son muy amplios.
+//
+// Excludes comunes: sectores que aparecen en AR con muchos empleados pero no son ICP.
+const COMMON_EXCLUDES = [
+  'staffing',
+  'recruiting',
+  'human resources',
+  'financial services',
+  'banking',
+  'insurance',
+  'consulting',
+  'legal',
+  'marketing',
+  'advertising',
+  'software',
+  'information technology',
+];
+
 const DEFAULTS_BY_VENTURE: Record<
   SearchLeadsVenture,
   {
     industries: string[];
+    keywords: string;
     employeeRanges: string[];
     locations: string[];
     excludeIndustries: string[];
   }
 > = {
+  // Wobox Food: marcas y retailers que mueven volumen perecedero (sobrestock).
+  // ICP: supermercados, dieteticas, productores con marca propia, marcas de food retail.
   wobox_food: {
-    industries: ['food & beverages', 'food production', 'restaurants'],
+    industries: [
+      'supermarkets',
+      'food production',
+      'food and beverage manufacturing',
+      'wholesale food and beverage',
+      'consumer goods',
+    ],
+    keywords: 'food retail supermercado alimentos consumo masivo',
     employeeRanges: ['11,50', '51,200', '201,500'],
     locations: ['Argentina'],
-    excludeIndustries: [
-      'financial services',
-      'management consulting',
-      'legal services',
-      'marketing and advertising',
-      'information technology and services',
-    ],
+    excludeIndustries: COMMON_EXCLUDES,
   },
+  // Wobox Fashion: marcas de moda con tienda fisica + e-commerce.
+  // ICP: brands con stock estacional (ropa, accesorios, calzado).
   wobox_fashion: {
-    industries: ['apparel & fashion', 'retail', 'consumer goods'],
+    industries: [
+      'apparel and fashion',
+      'retail apparel and fashion',
+      'fashion accessories',
+      'footwear',
+      'consumer goods',
+    ],
+    keywords: 'apparel fashion clothing moda indumentaria',
     employeeRanges: ['11,50', '51,200'],
     locations: ['Argentina'],
-    excludeIndustries: [
-      'financial services',
-      'management consulting',
-      'legal services',
-      'marketing and advertising',
-      'information technology and services',
-    ],
+    excludeIndustries: COMMON_EXCLUDES,
   },
+  // Loop cadenas: gastronomia + wellness + retail con multiples locales.
   loop: {
-    industries: ['restaurants', 'health, wellness and fitness', 'retail', 'apparel & fashion'],
+    industries: ['restaurants', 'health wellness and fitness', 'retail', 'consumer services'],
+    keywords: 'cadena chain franchise fitness restaurant wellness',
     employeeRanges: ['51,200', '201,500'],
     locations: ['Argentina'],
-    excludeIndustries: [
-      'financial services',
-      'management consulting',
-      'legal services',
-      'marketing and advertising',
-      'information technology and services',
-    ],
+    excludeIndustries: COMMON_EXCLUDES,
   },
 };
 
@@ -99,11 +126,12 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
   const employeeRanges = parseSemicolonList(opts.employeeRanges) ?? defaults.employeeRanges;
   const excludeIndustries = parseCsv(opts.excludeIndustries) ?? defaults.excludeIndustries;
   const locations = opts.region ? [opts.region] : defaults.locations;
+  const keywords = opts.keywords ?? defaults.keywords;
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
 
   log.info(
-    { venture, industries, employeeRanges, excludeIndustries, locations, perPage },
+    { venture, industries, keywords, employeeRanges, excludeIndustries, locations, perPage },
     'apollo searchOrganizations',
   );
 
@@ -114,7 +142,7 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
       excludeIndustries,
       locations,
       employeeRanges,
-      ...(opts.keywords ? { keywords: opts.keywords } : {}),
+      keywords,
       perPage,
     });
   } catch (err) {
