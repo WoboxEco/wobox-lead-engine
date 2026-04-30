@@ -8,6 +8,7 @@ import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
 import * as healthCheck from './health-check.js';
 import * as importCsv from './import-csv.js';
+import * as importFromHubspot from './import-from-hubspot.js';
 import * as nurtureSequence from './nurture-sequence.js';
 import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
@@ -72,6 +73,18 @@ program
   .option('--limit <n>', 'Max places por query de Apify (default: 30)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
   .action(searchLeadsWeb.run);
+program
+  .command('import-from-hubspot')
+  .description('Bulk import: trae companies + contacts desde HubSpot a Supabase')
+  .option(
+    '--venture <venture>',
+    'Venture default si la company no tiene "venture" property en HubSpot',
+  )
+  .option('--stage <stage>', 'Stage para companies importadas (default: qualified)')
+  .option('--limit <n>', 'Procesar solo N companies en vez de iterar todas')
+  .option('--dry-run', 'No insertar nada, solo loguear')
+  .action(importFromHubspot.run);
+
 program
   .command('import-csv')
   .description('Bulk import de companies (+contacts opcional) desde CSV')

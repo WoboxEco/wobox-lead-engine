@@ -134,6 +134,157 @@ export async function getClosedDeals(since: Date): Promise<ClosedDeal[]> {
   }));
 }
 
+// =====================================================================
+// Bulk import: leer companies + contacts de HubSpot para popular Supabase
+// =====================================================================
+
+export interface HubspotCompany {
+  id: string;
+  name: string | null;
+  website: string | null;
+  linkedinUrl: string | null;
+  country: string | null;
+  city: string | null;
+  state: string | null;
+  industry: string | null;
+  numEmployees: number | null;
+  /** Custom property "venture" si esta seteada en HubSpot */
+  venture: Venture | null;
+  /** lifecyclestage standard */
+  lifecycleStage: string | null;
+}
+
+export interface HubspotContact {
+  id: string;
+  firstname: string | null;
+  lastname: string | null;
+  email: string | null;
+  phone: string | null;
+  jobTitle: string | null;
+  linkedinUrl: string | null;
+  companyId: string | null;
+}
+
+export interface ListCompaniesParams {
+  limit?: number;
+  after?: string;
+}
+
+export interface ListCompaniesResult {
+  companies: HubspotCompany[];
+  nextCursor: string | null;
+}
+
+const COMPANY_PROPERTIES = [
+  'name',
+  'domain',
+  'website',
+  'linkedin_company_page',
+  'country',
+  'city',
+  'state',
+  'industry',
+  'numberofemployees',
+  'venture',
+  'lifecyclestage',
+];
+
+const CONTACT_PROPERTIES = ['firstname', 'lastname', 'email', 'phone', 'jobtitle', 'linkedinbio'];
+
+export async function listCompaniesPage(
+  params: ListCompaniesParams = {},
+): Promise<ListCompaniesResult> {
+  const search = new URLSearchParams();
+  search.set('limit', String(params.limit ?? 100));
+  if (params.after) search.set('after', params.after);
+  for (const prop of COMPANY_PROPERTIES) search.append('properties', prop);
+
+  const res = await _hubspotFetch<{
+    results: Array<{ id: string; properties: Record<string, string | null> }>;
+    paging?: { next?: { after: string } };
+  }>(`/crm/v3/objects/companies?${search.toString()}`);
+
+  const companies = res.results.map((r) => mapCompany(r.id, r.properties));
+  return {
+    companies,
+    nextCursor: res.paging?.next?.after ?? null,
+  };
+}
+
+export async function* iterateAllCompanies(pageSize = 100): AsyncGenerator<HubspotCompany> {
+  let cursor: string | null = null;
+  do {
+    const page = await listCompaniesPage({
+      limit: pageSize,
+      ...(cursor ? { after: cursor } : {}),
+    });
+    for (const c of page.companies) yield c;
+    cursor = page.nextCursor;
+  } while (cursor);
+}
+
+export async function listCompanyContacts(companyId: string): Promise<HubspotContact[]> {
+  // Paso 1: traer IDs de contacts asociados.
+  const assoc = await _hubspotFetch<{
+    results: Array<{ toObjectId: number; associationTypes?: Array<{ category: string }> }>;
+  }>(`/crm/v4/objects/companies/${companyId}/associations/contacts?limit=100`);
+
+  const contactIds = assoc.results.map((r) => String(r.toObjectId));
+  if (contactIds.length === 0) return [];
+
+  // Paso 2: batch read de contacts con todas las properties que nos interesan.
+  const res = await _hubspotFetch<{
+    results: Array<{ id: string; properties: Record<string, string | null> }>;
+  }>('/crm/v3/objects/contacts/batch/read', {
+    method: 'POST',
+    body: JSON.stringify({
+      properties: CONTACT_PROPERTIES,
+      inputs: contactIds.map((id) => ({ id })),
+    }),
+  });
+
+  return res.results.map((r) => mapContact(r.id, r.properties, companyId));
+}
+
+function mapCompany(id: string, p: Record<string, string | null>): HubspotCompany {
+  const employees = p.numberofemployees ? Number.parseInt(p.numberofemployees, 10) : null;
+  return {
+    id,
+    name: p.name ?? null,
+    website: p.website ?? p.domain ?? null,
+    linkedinUrl: p.linkedin_company_page ?? null,
+    country: p.country ?? null,
+    city: p.city ?? null,
+    state: p.state ?? null,
+    industry: p.industry ?? null,
+    numEmployees: Number.isFinite(employees) ? employees : null,
+    venture: validVenture(p.venture),
+    lifecycleStage: p.lifecyclestage ?? null,
+  };
+}
+
+function mapContact(
+  id: string,
+  p: Record<string, string | null>,
+  companyId: string,
+): HubspotContact {
+  return {
+    id,
+    firstname: p.firstname ?? null,
+    lastname: p.lastname ?? null,
+    email: p.email ?? null,
+    phone: p.phone ?? null,
+    jobTitle: p.jobtitle ?? null,
+    linkedinUrl: p.linkedinbio ?? null,
+    companyId,
+  };
+}
+
+function validVenture(value: string | null | undefined): Venture | null {
+  if (value === 'wobox_food' || value === 'wobox_fashion' || value === 'loop') return value;
+  return null;
+}
+
 export async function _hubspotFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const e = env();
   if (!e.HUBSPOT_PRIVATE_APP_TOKEN) {

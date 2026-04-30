@@ -1,4 +1,5 @@
 export * as healthCheck from './health-check.js';
+export * as importFromHubspot from './import-from-hubspot.js';
 export * as searchLeads from './search-leads.js';
 export * as searchLeadsWeb from './search-leads-web.js';
 export * as enrichLead from './enrich-lead.js';
