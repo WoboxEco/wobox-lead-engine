@@ -1,5 +1,6 @@
 import { headers } from 'next/headers';
 import type { ReactNode } from 'react';
+import { MobileTopbar, Sidebar } from '../components/sidebar';
 import './globals.css';
 
 export const metadata = {
@@ -11,49 +12,27 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const headerList = await headers();
   const userEmail = headerList.get('x-user-email');
 
+  // /login y /auth/forbidden no muestran shell (no hay sesion o esta cortada)
+  if (!userEmail) {
+    return (
+      <html lang="es" data-theme="dark">
+        <body>{children}</body>
+      </html>
+    );
+  }
+
   return (
-    <html lang="es">
+    <html lang="es" data-theme="dark">
       <body>
-        <main>
-          <nav className="top">
-            <a href="/">Home</a>
-            <a href="/pipeline">Pipeline</a>
-            <a href="/drafts">Drafts</a>
-            <a href="/nurture">Nurture hoy</a>
-            <a href="/campaigns">Campaigns</a>
-            <a href="/daily-review">Daily review</a>
-            {userEmail ? (
-              <span
-                style={{
-                  marginLeft: 'auto',
-                  display: 'flex',
-                  gap: '0.75rem',
-                  alignItems: 'center',
-                }}
-              >
-                <span className="subtitle" style={{ fontSize: '0.85rem' }}>
-                  {userEmail}
-                </span>
-                <form action="/auth/signout" method="post" style={{ display: 'inline' }}>
-                  <button
-                    type="submit"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'inherit',
-                      cursor: 'pointer',
-                      textDecoration: 'underline',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    Salir
-                  </button>
-                </form>
-              </span>
-            ) : null}
-          </nav>
-          {children}
-        </main>
+        <div className="min-h-screen flex flex-col md:flex-row">
+          <Sidebar userEmail={userEmail} />
+          <div className="flex-1 flex flex-col min-w-0">
+            <MobileTopbar userEmail={userEmail} />
+            <main className="flex-1 px-5 md:px-8 py-6 md:py-8 max-w-[1280px] w-full mx-auto">
+              {children}
+            </main>
+          </div>
+        </div>
       </body>
     </html>
   );
