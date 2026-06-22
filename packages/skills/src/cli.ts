@@ -4,6 +4,7 @@ import { Command } from 'commander';
 
 import * as approveMessage from './approve-message.js';
 import * as checkWarmPath from './check-warm-path.js';
+import * as cleanupHubspotVenture from './cleanup-hubspot-venture.js';
 import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
 import * as healthCheck from './health-check.js';
@@ -14,6 +15,7 @@ import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
 import * as searchLeads from './search-leads.js';
 import * as setupDatabase from './setup-database.js';
+import * as sourcingCas from './sourcing-cas.js';
 import * as showMetrics from './show-metrics.js';
 import * as showPipeline from './show-pipeline.js';
 import * as syncHubspot from './sync-hubspot.js';
@@ -74,6 +76,16 @@ program
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus')
   .action(searchLeadsWeb.run);
 program
+  .command('cleanup-hubspot-venture')
+  .description(
+    'Mueve companies importadas de HubSpot que cayeron mal en wobox_food -> loop. Modo all-to-loop o surgical (matching por nombre).',
+  )
+  .option('--mode <mode>', 'all-to-loop | surgical (default: all-to-loop)')
+  .option('--dry-run', 'No tocar DB, solo reportar')
+  .option('--limit <n>', 'Procesar solo N (debug)')
+  .action(cleanupHubspotVenture.run);
+
+program
   .command('import-from-hubspot')
   .description('Bulk import: trae companies + contacts desde HubSpot a Supabase')
   .option(
@@ -84,6 +96,21 @@ program
   .option('--limit <n>', 'Procesar solo N companies en vez de iterar todas')
   .option('--dry-run', 'No insertar nada, solo loguear')
   .action(importFromHubspot.run);
+
+program
+  .command('sourcing-cas')
+  .description(
+    'Scrapea el directorio de socios de la Camara Argentina de Supermercados (CAS) e inserta en wobox_food',
+  )
+  .option('--limit <n>', 'Limite de companies a procesar')
+  .option('--start-page <n>', 'Pagina inicial (default: 1)')
+  .option(
+    '--category <cat>',
+    'alimentos | servicios | productos-saludables (default: todas)',
+  )
+  .option('--stage <stage>', 'Stage de companies (default: new)')
+  .option('--dry-run', 'No insertar, solo reportar')
+  .action(sourcingCas.run);
 
 program
   .command('import-csv')
