@@ -16,6 +16,12 @@ export interface SearchLeadsOptions {
   campaign?: string;
   limit?: string;
   model?: string;
+  /**
+   * No insertar nada ni buscar decision-makers; solo previsualizar qué orgs traería.
+   * OJO: la búsqueda de organizaciones en Apollo igual se ejecuta (consume 1 crédito real),
+   * porque sin llamar a la API no hay nada que previsualizar.
+   */
+  dryRun?: boolean;
 }
 
 // Titulos que tratamos como decision makers para la busqueda inicial.
@@ -129,9 +135,10 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
   const keywords = opts.keywords ?? defaults.keywords;
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
+  const dryRun = !!opts.dryRun;
 
   log.info(
-    { venture, industries, keywords, employeeRanges, excludeIndustries, locations, perPage },
+    { venture, industries, keywords, employeeRanges, excludeIndustries, locations, perPage, dryRun },
     'apollo searchOrganizations',
   );
 
@@ -156,13 +163,17 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
   }
 
   // Track creditos: 1 por cada call a search-organizations.
-  await db.from('api_usage').insert({
-    service: 'apollo',
-    operation: 'search-organizations',
-    credits_used: 1,
-    tokens_used: null,
-    venture,
-  });
+  // En dry-run la llamada igual se ejecutó (gastó 1 crédito real), pero no la registramos
+  // en api_usage para no ensuciar el tracking de corridas "de verdad".
+  if (!dryRun) {
+    await db.from('api_usage').insert({
+      service: 'apollo',
+      operation: 'search-organizations',
+      credits_used: 1,
+      tokens_used: null,
+      venture,
+    });
+  }
 
   const orgs = result.organizations;
   log.info(
@@ -177,9 +188,9 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
     return;
   }
 
-  // Optional campaign upsert.
+  // Optional campaign upsert (se omite en dry-run para no escribir nada).
   let campaignId: string | null = null;
-  if (opts.campaign) {
+  if (opts.campaign && !dryRun) {
     campaignId = await upsertCampaign(db, opts.campaign, venture, locations[0] ?? null);
   }
 
@@ -227,6 +238,12 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
     if (nameKey) seenNameVenture.add(nameKey);
 
     const region = buildRegion(org);
+
+    if (dryRun) {
+      console.log(`[DRY] ${org.name} | ${region ?? '-'} | ${org.website_url ?? '-'}`);
+      inserted += 1; // contamos como "se insertaría"
+      continue;
+    }
 
     const { data: companyRow, error: insertErr } = await db
       .from('companies')
@@ -278,6 +295,16 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
       // No queremos romper toda la corrida si un org no tiene DMs visibles.
       log.warn({ err: String(err), company: org.name }, 'searchDecisionMakers failed');
     }
+  }
+
+  if (dryRun) {
+    console.log(
+      `\nsearch-leads [DRY]: total=${orgs.length} nuevos=${inserted} duplicates=${duplicates} (no se insertó nada, no se buscaron decision-makers).`,
+    );
+    console.log(
+      'Nota: la búsqueda de organizaciones en Apollo consumió 1 crédito real (no trackeado).',
+    );
+    return;
   }
 
   const creditsUsed = 1; // solo contamos la search-organizations; searchDecisionMakers no esta tracked.

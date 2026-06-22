@@ -64,6 +64,10 @@ program
   .option('--keywords <text>', 'Free text adicional')
   .option('--campaign <name>', 'Asociar leads a una campana (se crea si no existe)')
   .option('--model <alias>', 'Override modelo (no usado actualmente, mantenido por parity)')
+  .option(
+    '--dry-run',
+    'Preview: no inserta ni busca decision-makers (la search igual gasta 1 credito Apollo)',
+  )
   .action(searchLeads.run);
 program
   .command('search-leads-web')

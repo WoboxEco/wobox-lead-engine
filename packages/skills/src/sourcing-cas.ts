@@ -270,9 +270,12 @@ async function fetchDetail(url: string): Promise<CasDetail> {
 
 function extractField(html: string, label: string): string | null {
   // Pattern: <strong>Label:</strong> value</p>  o   <strong>Label:</strong> <a href="mailto:x">x</a></p>
+  // El terminador NO puede ser solo </p>: WordPress a veces emite <p> sin cerrar y
+  // los campos quedan en un mismo <p> separados por <br> o por el proximo <strong>.
+  // Por eso cortamos la captura en lo que venga primero: <br | </p | </div | <strong | fin.
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(
-    `<strong>\\s*${escaped}\\s*:\\s*</strong>\\s*([\\s\\S]*?)</p>`,
+    `<strong>\\s*${escaped}\\s*:\\s*</strong>\\s*([\\s\\S]*?)(?:<br|</p|</div|<strong|$)`,
     'i',
   );
   const m = html.match(re);
@@ -295,13 +298,29 @@ function extractBetween(html: string, start: string, end: string): string | null
 }
 
 function decodeHtml(s: string): string {
-  return s
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+  return (
+    s
+      // entities numericas primero (decimal y hex): &#8211; &#8217; &#x2014; ...
+      .replace(/&#(\d+);/g, (_, n) => fromCodePointSafe(Number.parseInt(n, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => fromCodePointSafe(Number.parseInt(n, 16)))
+      // entities nombradas comunes
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      // &amp; ultimo para no des-escapar de mas (&amp;lt; -> &lt;)
+      .replace(/&amp;/g, '&')
+  );
+}
+
+function fromCodePointSafe(code: number): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return '';
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return '';
+  }
 }
 
 // ========================

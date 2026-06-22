@@ -80,7 +80,7 @@ pnpm lint                          # Biome
 | `health-check` | — | Valida env + auth con APIs |
 | `import-csv` | — | Bulk import offline desde CSV |
 | `search-leads-web` | Apify + Claude | Apify Maps + IG por barrio |
-| `search-leads` | — (stub) | Placeholder Apollo |
+| `search-leads` | Apollo (1 cr/búsqueda) | Apollo org search por venture (food/fashion/loop) + decision-makers sin email. `--dry-run` previsualiza sin insertar |
 | `enrich-lead` | Apify | IG followers + website scrape para IG handle |
 | `score-leads` | Claude | Scoring multi-dimensional con zod |
 | `check-warm-path` | Apollo (1 cr en `--auto-reveal`) | `--list`/`--mark` manual o `--auto` con API |
