@@ -80,6 +80,9 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   log.info({ ok, failed, total: companies.length }, 'scoring done');
 }
 
+// Umbral de calificación: companies con total_score por debajo se descartan.
+const QUALIFY_THRESHOLD = 50;
+
 async function scoreOne(
   company: Record<string, unknown> & { id: string; venture: Venture },
   db: ReturnType<typeof createAdminClient>,
@@ -102,6 +105,8 @@ async function scoreOne(
     leadData,
   );
 
+  let totalScore = 0;
+
   if (isWoboxVenture(venture)) {
     const score = await claude.completeJson({
       system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
@@ -114,6 +119,7 @@ async function scoreOne(
     });
 
     await persistWoboxScore(db, company.id, scoringModel, score);
+    totalScore = score.total_score;
   } else {
     const score = await claude.completeJson({
       system: 'Sos un analista comercial senior. Respondes SOLO JSON valido.',
@@ -126,11 +132,14 @@ async function scoreOne(
     });
 
     await persistLoopScore(db, company.id, scoringModel, score);
+    totalScore = score.total_score;
   }
 
+  // Gate por umbral: ≥50 califica, <50 se descarta (comportamiento documentado en CLAUDE.md).
+  const newStage = totalScore >= QUALIFY_THRESHOLD ? 'qualified' : 'discarded';
   const { error: stageErr } = await db
     .from('companies')
-    .update({ stage: 'qualified', updated_at: new Date().toISOString() })
+    .update({ stage: newStage, updated_at: new Date().toISOString() })
     .eq('id', company.id);
   if (stageErr) log.warn({ err: stageErr }, 'stage update failed');
 }
