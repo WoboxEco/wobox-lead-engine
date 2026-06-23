@@ -160,8 +160,13 @@ program
   .action(checkWarmPath.run);
 program
   .command('generate-messages')
-  .description('Genera mensaje draft via Claude (default: sonnet)')
-  .option('--id <uuid>', 'company_id target')
+  .description('Genera mensaje draft via Claude (default: sonnet). --id (single) o --all (batch)')
+  .option('--id <uuid>', 'company_id target (modo single)')
+  .option('--all', 'Modo batch: genera para todas las companies de un stage/venture')
+  .option('--venture <venture>', 'Filtrar batch por venture (wobox_food | wobox_fashion | loop)')
+  .option('--stage <stage>', 'Stage objetivo en batch (default: qualified)')
+  .option('--limit <n>', 'Max companies en batch (default: 50)')
+  .option('--force', 'Regenerar aunque ya exista un draft para el canal')
   .option('--contact-id <uuid>', 'Forzar contacto especifico (default: decision maker)')
   .option(
     '--approach <type>',

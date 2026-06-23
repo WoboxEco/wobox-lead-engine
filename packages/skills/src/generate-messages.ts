@@ -16,6 +16,15 @@ export const DEFAULT_MODEL = 'sonnet';
 
 export interface GenerateMessagesOptions {
   id?: string;
+  /** Batch: genera para todas las companies de un stage/venture en vez de --id */
+  all?: boolean;
+  venture?: string;
+  /** Stage objetivo en modo batch (default: qualified) */
+  stage?: string;
+  /** Max companies en modo batch (default: 50) */
+  limit?: string;
+  /** Regenerar aunque ya exista un draft para el canal */
+  force?: boolean;
   contactId?: string;
   approach?: ApproachType;
   channel?: Channel;
@@ -23,51 +32,151 @@ export interface GenerateMessagesOptions {
   model?: string;
 }
 
+const COMPANY_SELECT =
+  '*, contacts(*), scores(total_score, scoring_model, ai_reasoning, scored_at)';
+
+type CompanyRow = Record<string, unknown> & {
+  id: string;
+  name: string;
+  venture: Venture;
+  vertical?: string;
+  subsector?: string;
+  buyer_persona?: string;
+  locations_count?: number;
+  region?: string;
+  neighborhood?: string;
+  social_followers?: number;
+  instagram_handle?: string;
+  contacts: Contact[];
+  scores: Array<{
+    total_score: number;
+    scoring_model: string;
+    ai_reasoning: string;
+    scored_at: string;
+  }>;
+};
+
 export async function run(opts: GenerateMessagesOptions): Promise<void> {
   const log = createLogger('generate-messages');
   const db = createAdminClient();
 
-  if (!opts.id) throw new Error('Requiere --id <company_uuid>');
   const model = opts.model ?? DEFAULT_MODEL;
   const channel: Channel = opts.channel ?? 'linkedin';
   const step = Number.parseInt(opts.step ?? '1', 10);
 
-  // Fetch company + latest score + contacts.
-  const { data: companyData, error: fetchErr } = await db
-    .from('companies')
-    .select('*, contacts(*), scores(total_score, scoring_model, ai_reasoning, scored_at)')
-    .eq('id', opts.id)
-    .single();
-
-  if (fetchErr || !companyData) {
-    throw new Error(`Company ${opts.id} not found: ${fetchErr?.message}`);
+  if (!opts.id && !opts.all) {
+    throw new Error(
+      'Requiere --id <company_uuid> o --all (opcional con --venture, --stage, --limit)',
+    );
   }
 
-  const company = companyData as unknown as Record<string, unknown> & {
-    id: string;
-    name: string;
-    venture: Venture;
-    vertical?: string;
-    subsector?: string;
-    buyer_persona?: string;
-    locations_count?: number;
-    region?: string;
-    neighborhood?: string;
-    social_followers?: number;
-    instagram_handle?: string;
-    contacts: Contact[];
-    scores: Array<{
-      total_score: number;
-      scoring_model: string;
-      ai_reasoning: string;
-      scored_at: string;
-    }>;
-  };
+  // Modo single
+  if (opts.id) {
+    const company = await fetchCompany(db, opts.id);
+    if (!company) throw new Error(`Company ${opts.id} not found`);
+    try {
+      await generateForCompany({ db, log, company, model, channel, step, opts });
+    } catch (err) {
+      await writeErrorLog(db, {
+        skill: 'generate-messages',
+        error: err,
+        companyId: company.id,
+        context: { channel, step },
+      });
+      throw err;
+    }
+    console.log(`Draft generado para ${company.name}`);
+    return;
+  }
+
+  // Modo batch
+  const stage = opts.stage ?? 'qualified';
+  const limit = opts.limit ? Number.parseInt(opts.limit, 10) : 50;
+  let q = db.from('companies').select(COMPANY_SELECT).eq('stage', stage).limit(limit);
+  if (opts.venture) q = q.eq('venture', opts.venture);
+  const { data, error } = await q;
+  if (error) throw new Error(`fetch companies: ${error.message}`);
+  const companies = (data as unknown as CompanyRow[]) ?? [];
+
+  if (companies.length === 0) {
+    console.log(`No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`);
+    return;
+  }
+
+  // Pre-cargar drafts existentes del canal para no duplicar (salvo --force).
+  const haveDraft = new Set<string>();
+  if (!opts.force) {
+    const ids = companies.map((c) => c.id);
+    const { data: msgs } = await db
+      .from('messages')
+      .select('company_id')
+      .eq('channel', channel)
+      .eq('status', 'draft')
+      .in('company_id', ids);
+    for (const m of (msgs as Array<{ company_id: string }> | null) ?? []) {
+      haveDraft.add(m.company_id);
+    }
+  }
+
+  console.log(
+    `\nGenerando mensajes (canal=${channel}, modelo=${model}) para ${companies.length} companies en stage=${stage}...\n`,
+  );
+
+  let ok = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const company of companies) {
+    if (!company.contacts || company.contacts.length === 0) {
+      skipped++;
+      console.log(`  [skip] ${company.name}: sin contacts`);
+      continue;
+    }
+    if (haveDraft.has(company.id)) {
+      skipped++;
+      console.log(`  [skip] ${company.name}: ya tiene draft ${channel} (--force para regenerar)`);
+      continue;
+    }
+    try {
+      await generateForCompany({ db, log, company, model, channel, step, opts });
+      ok++;
+      console.log(`  [ok]   ${company.name}`);
+    } catch (err) {
+      failed++;
+      console.log(`  [FAIL] ${company.name}: ${err instanceof Error ? err.message : String(err)}`);
+      await writeErrorLog(db, {
+        skill: 'generate-messages',
+        error: err,
+        companyId: company.id,
+        context: { batch: true, channel },
+      });
+    }
+  }
+
+  console.log(`\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}`);
+}
+
+async function fetchCompany(db: DbClient, id: string): Promise<CompanyRow | null> {
+  const { data, error } = await db.from('companies').select(COMPANY_SELECT).eq('id', id).single();
+  if (error || !data) return null;
+  return data as unknown as CompanyRow;
+}
+
+async function generateForCompany(args: {
+  db: DbClient;
+  log: ReturnType<typeof createLogger>;
+  company: CompanyRow;
+  model: string;
+  channel: Channel;
+  step: number;
+  opts: GenerateMessagesOptions;
+}): Promise<void> {
+  const { db, log, company, model, channel, step, opts } = args;
 
   const contact = selectContact(company.contacts, opts.contactId);
   if (!contact) {
     throw new Error(
-      `Company ${company.name} no tiene contacts. Insertar un contact primero (idealmente con is_decision_maker=true).`,
+      `${company.name} no tiene contacts (insertar uno, idealmente con is_decision_maker=true)`,
     );
   }
 
@@ -85,51 +194,37 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
     ...(latestScore ? { score: latestScore } : {}),
   });
 
-  log.info(
-    { model, approach, channel, promptName, contactName: contact.name },
-    'generating message',
-  );
+  log.info({ model, approach, channel, promptName, company: company.name }, 'generating message');
 
-  try {
-    const prompt = await loadPrompt('messages', promptName, vars);
-    const system = buildSystemPrompt(company.venture, approach, channel);
-    const rawOutput = await claude.completeText({
-      system,
-      user: prompt,
-      venture: company.venture,
-      operation: `generate-${promptName}`,
-      model,
-      maxTokens: 1024,
-    });
+  const prompt = await loadPrompt('messages', promptName, vars);
+  const system = buildSystemPrompt(company.venture, approach, channel);
+  const rawOutput = await claude.completeText({
+    system,
+    user: prompt,
+    venture: company.venture,
+    operation: `generate-${promptName}`,
+    model,
+    maxTokens: 1024,
+  });
 
-    const { subject, body } = parseOutput(rawOutput, channel);
+  const { subject, body } = parseOutput(rawOutput, channel);
 
-    const { error: insertErr } = await db.from('messages').insert({
-      contact_id: contact.id,
-      company_id: company.id,
-      sequence_step: approach === 'nurture' ? step : null,
-      approach_type: approach,
-      channel,
-      subject,
-      body,
-      original_body: body,
-      prompt_version: promptName,
-      status: 'draft',
-      created_at: new Date().toISOString(),
-    });
-    if (insertErr) throw new Error(`insert message: ${insertErr.message}`);
+  const { error: insertErr } = await db.from('messages').insert({
+    contact_id: contact.id,
+    company_id: company.id,
+    sequence_step: approach === 'nurture' ? step : null,
+    approach_type: approach,
+    channel,
+    subject,
+    body,
+    original_body: body,
+    prompt_version: promptName,
+    status: 'draft',
+    created_at: new Date().toISOString(),
+  });
+  if (insertErr) throw new Error(`insert message: ${insertErr.message}`);
 
-    log.info({ promptName, approach, channel }, 'draft message saved');
-  } catch (err) {
-    log.error({ err, companyId: company.id }, 'generation failed');
-    await writeErrorLog(db, {
-      skill: 'generate-messages',
-      error: err,
-      companyId: company.id,
-      context: { approach, channel, promptName, step },
-    });
-    throw err;
-  }
+  log.info({ promptName, approach, channel, company: company.name }, 'draft message saved');
 }
 
 export type Contact = Record<string, unknown> & {
