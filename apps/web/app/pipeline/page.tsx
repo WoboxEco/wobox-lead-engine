@@ -2,6 +2,7 @@ import { createAdminClient } from '@wobox/core';
 import { AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
 import { changeStage, discardCompany } from './actions';
+import { ProspectBar } from './prospect-bar';
 import { VentureSelect } from './venture-select';
 
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,9 @@ export default async function PipelinePage({ searchParams }: PageProps) {
           {minScoreNum !== null && ` · score >= ${minScoreNum}`}
         </p>
       </div>
+
+      {/* Acciones: +Prospect (sourcing+scoring) y Generar mensajes */}
+      <ProspectBar defaultVenture={venture ?? ''} />
 
       {/* Filtros */}
       <form method="get" className="surface p-4">
