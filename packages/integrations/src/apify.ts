@@ -68,23 +68,27 @@ export async function getInstagramProfiles(handles: string[]): Promise<Instagram
     resultsLimit: 1,
   });
 
-  return raw.map((r) => ({
-    username: r.username,
-    ...(r.fullName ? { fullName: r.fullName } : {}),
-    ...(r.biography ? { biography: r.biography } : {}),
-    ...(typeof r.followersCount === 'number' ? { followersCount: r.followersCount } : {}),
-    ...(typeof r.followsCount === 'number' ? { followsCount: r.followsCount } : {}),
-    ...(typeof r.postsCount === 'number' ? { postsCount: r.postsCount } : {}),
-    ...(r.externalUrl ? { externalUrl: r.externalUrl } : {}),
-    ...(Array.isArray(r.latestPosts)
-      ? {
-          latestPosts: r.latestPosts.slice(0, 5).map((p) => ({
-            ...(p.caption ? { caption: p.caption } : {}),
-            ...(p.timestamp ? { timestamp: p.timestamp } : {}),
-          })),
-        }
-      : {}),
-  }));
+  // Apify puede devolver items sin username (handle inexistente o item de error del actor).
+  // Los descartamos: un perfil sin username no sirve y rompe a los consumidores.
+  return raw
+    .filter((r) => typeof r.username === 'string' && r.username.length > 0)
+    .map((r) => ({
+      username: r.username,
+      ...(r.fullName ? { fullName: r.fullName } : {}),
+      ...(r.biography ? { biography: r.biography } : {}),
+      ...(typeof r.followersCount === 'number' ? { followersCount: r.followersCount } : {}),
+      ...(typeof r.followsCount === 'number' ? { followsCount: r.followsCount } : {}),
+      ...(typeof r.postsCount === 'number' ? { postsCount: r.postsCount } : {}),
+      ...(r.externalUrl ? { externalUrl: r.externalUrl } : {}),
+      ...(Array.isArray(r.latestPosts)
+        ? {
+            latestPosts: r.latestPosts.slice(0, 5).map((p) => ({
+              ...(p.caption ? { caption: p.caption } : {}),
+              ...(p.timestamp ? { timestamp: p.timestamp } : {}),
+            })),
+          }
+        : {}),
+    }));
 }
 
 interface RawInstagramProfile {
