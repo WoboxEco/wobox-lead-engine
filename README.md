@@ -140,6 +140,7 @@ El resto habilita fuentes específicas (Apollo, Apify, HubSpot, Calendly). `heal
 
 ## Docs
 
+- **`docs/GUIA-COMPLETA.md`** — guía de onboarding integral (empezá acá si nunca viste el proyecto)
 - `CLAUDE.md` — runbook operativo (comandos, convenciones, estado)
 - `docs/architecture.md` — mapa del código y data flow
 - `docs/handoff.md` — status del proyecto + roadmap
