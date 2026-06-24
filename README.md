@@ -1,29 +1,39 @@
 # Wobox Lead Engine
 
-Motor unificado de generacion y gestion de leads outbound para **Wobox Food**, **Wobox Fashion** y **Loop**.
+Motor de prospección outbound para **Wobox Food**, **Wobox Fashion** y **Loop**.
 
-End-to-end: Prospeccion -> Calentamiento -> Contacto -> Reunion -> Metricas -> Flywheel.
+End-to-end: Sourcing → Enrich → Scoring → Warm-path → Mensajes → Aprobación → Nurture → CRM.
+
+> **Nota de uso:** hoy corre **localmente** (`pnpm dev` + CLI en tu máquina). No está pensado como servicio hosteado.
 
 ## Stack
 
 - **TypeScript** + **pnpm** workspaces (monorepo)
 - **Supabase** (PostgreSQL + Auth + Edge Functions + pg_cron)
-- **Claude API** (scoring + generacion de mensajes)
-- **Apollo.io** (leads estructurados: cadenas y franquicias)
-- **Apify** (web search + Instagram scraping para negocios locales de Loop)
-- **HubSpot** (CRM, pipeline de ventas)
-- **Next.js 15** (dashboard, Capa 3)
+- **Claude API** (scoring + generación de mensajes, con prompt caching)
+- **Apollo.io** (sourcing de empresas + decision-makers)
+- **Apify** (Google Maps + Instagram scraping)
+- **HubSpot** (CRM) · **Calendly** (booking)
+- **Next.js 15 / React 19** (dashboard)
 - **Biome** (lint + format)
 
 ## Arquitectura: 3 capas
 
 ```
-Capa 1: Skills         packages/skills     CLI desde terminal
-Capa 2: Agentes        packages/agents     Orquestacion de skills
-Capa 3: App web        apps/web            Dashboard para los 3 founders
+Capa 1: Skills      packages/skills    CLI individual (pnpm skill <n>)
+Capa 2: Agentes     packages/agents    Orquestan varias skills (pnpm agent <n>)
+Capa 3: Dashboard   apps/web           Next.js (pipeline, drafts, nurture)
 ```
 
-Ver `docs/architecture.md` para el mapa completo y el data flow.
+Packages de soporte: `core` (env, DB, tipos), `prompts` (prompts versionados), `integrations` (wrappers de cada API).
+
+Ver `docs/architecture.md` para el data flow completo. `CLAUDE.md` es el runbook operativo detallado.
+
+## Requisitos
+
+- **Node 22+** y **pnpm 9+**
+- Un proyecto de **Supabase** (gratis)
+- API keys: Anthropic (obligatoria), Apollo / Apify / HubSpot (según qué uses)
 
 ## Setup inicial
 
@@ -33,61 +43,105 @@ pnpm install
 
 # 2. Configurar credenciales
 cp .env.example .env
-# Editar .env con: SUPABASE_*, ANTHROPIC_API_KEY (minimo para arrancar)
+#    Completar al menos SUPABASE_* + ANTHROPIC_API_KEY.
+#    El resto (Apollo/Apify/HubSpot) según las fuentes que vayas a usar.
 
-# 3. Crear tablas en Supabase
+# 3. Crear el schema en Supabase (idempotente)
 pnpm skill setup-database
 
 # 4. Generar tipos de la DB
 pnpm db:types
 
-# 5. Probar scoring end-to-end
-# (insertar 1 company de prueba desde el dashboard de Supabase, luego:)
-pnpm skill score-leads --venture=loop --id=<uuid>
+# 5. Validar que todas las APIs autentican
+pnpm skill health-check
 ```
+
+`health-check` te dice exactamente qué credencial falta o falla.
+
+## Correr la app (local)
+
+```bash
+pnpm dev          # dashboard en http://localhost:3000
+```
+
+El dashboard tiene login con Google + whitelist de emails en
+[apps/web/lib/auth/whitelist.ts](apps/web/lib/auth/whitelist.ts). Agregá tu email ahí para entrar.
+El server tiene que estar corriendo para que el dashboard funcione.
 
 ## Comandos
 
 ```bash
-pnpm skill <nombre> [flags]       # correr una skill
-pnpm agent <nombre> [flags]       # correr un agente
-pnpm dev                          # levantar la webapp (Capa 3)
-pnpm typecheck                    # chequear tipos en todos los workspaces
-pnpm lint                         # Biome
-pnpm lint:fix                     # Biome autofix
-pnpm db:types                     # regenerar packages/core/src/database.types.ts
+pnpm skill <nombre> [flags]   # correr una skill
+pnpm agent <nombre> [flags]   # correr un agente (orquestador)
+pnpm dev                      # dashboard
+pnpm typecheck                # tipos en todos los workspaces
+pnpm lint  /  pnpm lint:fix   # Biome
+pnpm db:types                 # regenerar packages/core/src/database.types.ts
 ```
 
-## Skills disponibles
+## Pipeline end-to-end
 
-| Skill              | Estado        | Descripcion                                                    |
-|--------------------|---------------|----------------------------------------------------------------|
-| setup-database     | implementada  | Corre migrations contra Supabase                               |
-| score-leads        | implementada  | Scorea leads con el modelo correcto segun venture              |
-| search-leads       | stub          | Busqueda Apollo (Wobox + cadenas Loop)                         |
-| search-leads-web   | stub          | Busqueda web + Apify (Loop negocios locales)                   |
-| import-csv         | stub          | Import bulk desde CSV                                          |
-| enrich-lead        | stub          | Instagram + web enrichment                                     |
-| check-warm-path    | stub          | Detecta conexiones 1er/2do grado via Apollo                    |
-| generate-messages  | stub          | Genera mensajes via Claude segun venture + approach + channel  |
-| sync-hubspot       | stub          | Push meeting_booked a HubSpot, pull cierres                    |
-| show-pipeline      | stub          | Vista Kanban filtrable                                         |
-| show-metrics       | stub          | KPIs por venture + buyer persona                               |
-| approve-message    | stub          | Aprobar/editar/descartar drafts                                |
+```
+search-leads (Apollo)  ─┐
+sourcing-cas (CAS)     ─┼─► enrich-lead ─► score-leads ─► check-warm-path ─► generate-messages
+search-leads-web       ─┤   (web + IG)     (≥50 →         (revela email      (drafts)
+import-csv             ─┘                   qualified)     1cr c/u)              │
+                                                                                 ▼
+            sync-hubspot ◄─ Calendly webhook ◄─ nurture-sequence ◄─ approve-message
+```
 
-## Ventures y modelos de scoring
+Un solo comando que encadena search → enrich → score → warm:
 
-- **Wobox Food + Fashion**: `prompts/scoring/scoring-wobox-v1.md` (vertical, escala, sobrestock, franquicia, region).
-- **Loop**: `prompts/scoring/scoring-loop-v1.md` (recurrencia, sub-sector, digital, escala, region). Asigna buyer persona BP1-BP6.
+```bash
+pnpm agent full-prospecting --venture=loop --subsector=cafeteria --neighborhood="Palermo Soho" --limit=30
+```
 
-## Pipelines
+## Skills
 
-- **Prospeccion** (en la app): `new -> enriched -> qualified -> nurturing -> contacted -> meeting_booked -> discarded`
-- **Ventas** (en HubSpot): `sin contacto -> contacto -> presentacion -> negociacion -> onboarding -> cierre ganado/perdido`
-- Puente: `meeting_booked` crea deal en HubSpot; cierres vuelven a Supabase para el flywheel.
+| Skill | Gasta | Descripción |
+|-------|-------|-------------|
+| `setup-database` | — | Aplica migrations (idempotente) |
+| `health-check` | — | Valida env + auth con todas las APIs |
+| `import-csv` | — | Bulk import offline desde CSV |
+| `search-leads` | Apollo (1 cr) | Org search por venture + decision-makers (`--dry-run` previsualiza) |
+| `search-leads-web` | Apify + Claude | Google Maps + IG por barrio |
+| `sourcing-cas` | — (scrape) | Directorio Cámara Arg. de Supermercados → wobox_food |
+| `enrich-lead` | Apify | Followers IG + scrape de website |
+| `score-leads` | Claude | Scoring multi-dimensional; ≥50 → qualified, <50 → discarded |
+| `check-warm-path` | Apollo (1 cr en reveal) | Detecta warm-path / revela email |
+| `generate-messages` | Claude | Drafts por approach/venture/canal. `--id` (single) o `--all` (batch) |
+| `approve-message` | — | approve / edit / send / discard |
+| `nurture-sequence` | Claude | Follow-ups (días 2/5/10) |
+| `sync-hubspot` | — | Push meeting_booked + pull cierres |
+| `show-pipeline` / `show-metrics` | — | Lectura (Kanban + KPIs) |
+
+## Dashboard
+
+| Ruta | Qué muestra |
+|------|-------------|
+| `/` | Counts por stage + venture |
+| `/pipeline` | Tabla filtrable + **botones `+Prospect` y `Generar mensajes`** (disparan el pipeline sin terminal) + cambiar stage / descartar |
+| `/drafts` | Drafts con approve / edit / send inline |
+| `/nurture` | Vista `nurture_today` por founder |
+| `/daily-review` | Resumen cross-venture |
+
+## Ventures
+
+- **Wobox Food** → supermercados, alimentos, productores. Fuentes: CAS, Apollo, Apify Maps.
+- **Wobox Fashion** → marcas de indumentaria / calzado. Fuente: Apollo (o CSV de Sales Navigator).
+- **Loop** → cadenas de gastronomía / wellness / retail. Fuente: Apify Maps por barrio.
+
+El venture define **qué** se busca, **cómo** se puntúa y **cómo** se redactan los mensajes.
+
+## Variables de entorno
+
+Ver [.env.example](.env.example). Mínimo para arrancar: `SUPABASE_*` + `ANTHROPIC_API_KEY`.
+El resto habilita fuentes específicas (Apollo, Apify, HubSpot, Calendly). `health-check` valida todo.
 
 ## Docs
 
-- `docs/wobox-lead-engine-FINAL.md` — especificacion tecnica completa
+- `CLAUDE.md` — runbook operativo (comandos, convenciones, estado)
+- `docs/architecture.md` — mapa del código y data flow
+- `docs/handoff.md` — status del proyecto + roadmap
+- `docs/wobox-lead-engine-FINAL.md` — especificación técnica completa
 - `docs/wobox-lead-engine-como-funciona.md` — overview funcional
-- `docs/architecture.md` — mapa del codigo y data flow
