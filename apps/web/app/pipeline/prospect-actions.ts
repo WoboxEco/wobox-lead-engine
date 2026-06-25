@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { searchLeads, scoreLeads, generateMessages } from '@wobox/skills';
+import type { Channel } from '@wobox/core';
 
 const VENTURES = new Set(['wobox_food', 'wobox_fashion', 'loop']);
 const CHANNELS = new Set(['instagram_dm', 'email', 'linkedin', 'whatsapp']);
@@ -14,7 +15,7 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   if (!CHANNELS.has(channel)) return 'Canal inválido';
 
   try {
-    await generateMessages.run({ all: true, venture, channel });
+    await generateMessages.run({ all: true, venture, channel: channel as Channel });
   } catch (e) {
     return `Error: ${String(e).slice(0, 200)}`;
   }
