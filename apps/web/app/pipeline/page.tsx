@@ -3,6 +3,7 @@ import { AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
 import { changeStage, discardCompany } from './actions';
 import { UnlockButton } from './unlock-button';
+
 import { ProspectBar } from './prospect-bar';
 import { VentureSelect } from './venture-select';
 
