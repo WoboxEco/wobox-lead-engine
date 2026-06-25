@@ -27,10 +27,20 @@ export async function POST(req: Request) {
 
     const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
     const firstName = c.name.split(' ')[0] ?? c.name;
+    const apolloOrgId = c.companies?.apollo_id;
+
+    // Si tenemos el ID de la org en Apollo, buscamos el person ID exacto primero
+    let personId: string | undefined;
+    if (apolloOrgId) {
+      const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
+      const match = teasers.find(
+        (t) => (t.first_name ?? '').toLowerCase() === firstName.toLowerCase(),
+      );
+      personId = match?.id;
+    }
 
     const person = await apollo.matchPerson({
-      firstName,
-      organizationName: c.companies?.name ?? '',
+      ...(personId ? { personId } : { firstName, organizationName: c.companies?.name ?? '' }),
       venture,
       operation: 'unlock-contact',
     });

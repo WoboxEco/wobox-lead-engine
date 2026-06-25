@@ -157,12 +157,13 @@ export async function searchDecisionMakers(
   params: SearchDecisionMakersParams,
 ): Promise<ApolloPersonTeaser[]> {
   const titles = params.titles ?? ['CEO', 'Founder', 'Owner', 'Co-Founder', 'Managing Director'];
+  // Sin reintentos para uso interactivo
   const res = await apolloFetch<{ people: ApolloPersonTeaser[] }>('/mixed_people/api_search', {
     organization_ids: [params.orgId],
     person_titles: titles,
     page: 1,
     per_page: params.perPage ?? 10,
-  });
+  }, 0);
   return res.people ?? [];
 }
 
