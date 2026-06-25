@@ -1,7 +1,8 @@
 import { createAdminClient } from '@wobox/core';
 import { AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
-import { changeStage, discardCompany, unlockContact } from './actions';
+import { changeStage, discardCompany } from './actions';
+import { UnlockButton } from './unlock-button';
 import { ProspectBar } from './prospect-bar';
 import { VentureSelect } from './venture-select';
 
@@ -237,16 +238,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                               {c.email ? (
                                 <span className="text-accent">✓</span>
                               ) : (
-                                <form action={unlockContact} className="inline">
-                                  <input type="hidden" name="contactId" value={c.id} />
-                                  <button
-                                    type="submit"
-                                    title="Desbloquear email (gasta 1 crédito Apollo)"
-                                    className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--border)] text-muted hover:border-accent hover:text-accent transition-colors"
-                                  >
-                                    🔓
-                                  </button>
-                                </form>
+                                <UnlockButton contactId={c.id} />
                               )}
                               <span className={c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'}>
                                 {c.name}

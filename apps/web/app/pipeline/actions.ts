@@ -56,9 +56,10 @@ export async function unlockContact(formData: FormData): Promise<void> {
 
   const db = createAdminClient();
 
+  // Carga el contacto con empresa (necesitamos apollo_id de la empresa)
   const { data: contact, error: cErr } = await db
     .from('contacts')
-    .select('id, name, role, companies(name, venture)')
+    .select('id, name, role, company_id, companies(name, venture, apollo_id)')
     .eq('id', contactId)
     .single();
   if (cErr || !contact) throw new Error('contacto no encontrado');
@@ -67,16 +68,29 @@ export async function unlockContact(formData: FormData): Promise<void> {
     id: string;
     name: string;
     role: string | null;
-    companies: { name: string; venture: string } | null;
+    company_id: string;
+    companies: { name: string; venture: string; apollo_id: string | null } | null;
   };
 
-  const firstName = c.name.split(' ')[0] ?? c.name;
-  const companyName = c.companies?.name ?? '';
   const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
+  const apolloOrgId = c.companies?.apollo_id;
 
+  let personId: string | undefined;
+
+  // Si tenemos el apollo_id de la empresa, buscamos el DM por nombre para obtener el personId
+  if (apolloOrgId) {
+    const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
+    const firstName = c.name.split(' ')[0]?.toLowerCase() ?? '';
+    const match = teasers.find((t) =>
+      (t.first_name ?? '').toLowerCase() === firstName,
+    );
+    personId = match?.id;
+  }
+
+  // Llamamos matchPerson con el personId (si lo encontramos) o con firstName + companyName
+  const firstName = c.name.split(' ')[0] ?? c.name;
   const person = await apollo.matchPerson({
-    firstName,
-    organizationName: companyName,
+    ...(personId ? { personId } : { firstName, organizationName: c.companies?.name ?? '' }),
     venture,
     operation: 'unlock-contact',
   });
