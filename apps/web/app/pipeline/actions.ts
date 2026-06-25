@@ -73,19 +73,11 @@ export async function unlockContact(_prev: string | null, formData: FormData): P
     };
 
     const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
-    const apolloOrgId = c.companies?.apollo_id;
-
-    let personId: string | undefined;
-    if (apolloOrgId) {
-      const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
-      const firstNameLower = c.name.split(' ')[0]?.toLowerCase() ?? '';
-      const match = teasers.find((t) => (t.first_name ?? '').toLowerCase() === firstNameLower);
-      personId = match?.id;
-    }
-
     const firstName = c.name.split(' ')[0] ?? c.name;
+
     const person = await apollo.matchPerson({
-      ...(personId ? { personId } : { firstName, organizationName: c.companies?.name ?? '' }),
+      firstName,
+      organizationName: c.companies?.name ?? '',
       venture,
       operation: 'unlock-contact',
     });
