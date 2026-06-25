@@ -70,7 +70,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <h2 className="text-[14px] font-semibold">Prospectar leads nuevos</h2>
           </div>
           <p className={`${labelClass} mt-1`}>
-            Trae leads nuevos de Apollo y los puntúa con IA. Gasta 1 crédito Apollo.
+            Trae leads nuevos (Apollo o web) y los puntúa con IA. Apollo gasta 1 crédito.
           </p>
         </div>
 
