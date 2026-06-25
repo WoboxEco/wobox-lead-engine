@@ -1,7 +1,7 @@
 import { createAdminClient } from '@wobox/core';
 import { AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
-import { changeStage, discardCompany } from './actions';
+import { changeStage, discardCompany, unlockContact } from './actions';
 import { ProspectBar } from './prospect-bar';
 import { VentureSelect } from './venture-select';
 
@@ -48,7 +48,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   let q = db
     .from('companies')
     .select(
-      'id, name, venture, stage, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, scores(total_score, scored_at), contacts(name, role, warm_path)',
+      'id, name, venture, stage, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, scores(total_score, scored_at), contacts(id, name, role, email, linkedin_url, warm_path, is_decision_maker)',
     )
     .order('created_at', { ascending: false })
     .limit(200);
@@ -74,7 +74,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     instagram_handle: string | null;
     social_followers: number | null;
     scores: Array<{ total_score: number; scored_at: string }>;
-    contacts: Array<{ name: string; role: string | null; warm_path: string | null }>;
+    contacts: Array<{ id: string; name: string; role: string | null; email: string | null; linkedin_url: string | null; warm_path: string | null; is_decision_maker: boolean | null }>;
   };
 
   const minScoreNum = minScore ? Number(minScore) : null;
@@ -176,7 +176,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                   <th className="py-3 px-4">Venture · BP</th>
                   <th className="py-3 px-4">Ubicacion</th>
                   <th className="py-3 px-4">Instagram</th>
-                  <th className="py-3 px-4">Warm path</th>
+                  <th className="py-3 px-4">Contactos</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -227,8 +227,38 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                         <span className="text-muted">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-muted-strong">
-                      {r.warm ?? <span className="text-muted">-</span>}
+                    <td className="py-3 px-4">
+                      {r.contacts.length === 0 ? (
+                        <span className="text-muted text-[12px]">-</span>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {r.contacts.map((c) => (
+                            <div key={c.id} className="flex items-center gap-1.5 text-[12px]">
+                              {c.email ? (
+                                <span className="text-accent">✓</span>
+                              ) : (
+                                <form action={unlockContact} className="inline">
+                                  <input type="hidden" name="contactId" value={c.id} />
+                                  <button
+                                    type="submit"
+                                    title="Desbloquear email (gasta 1 crédito Apollo)"
+                                    className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--border)] text-muted hover:border-accent hover:text-accent transition-colors"
+                                  >
+                                    🔓
+                                  </button>
+                                </form>
+                              )}
+                              <span className={c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'}>
+                                {c.name}
+                              </span>
+                              {c.role && <span className="text-muted">· {c.role}</span>}
+                              {c.email && (
+                                <span className="text-muted">· {c.email}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
