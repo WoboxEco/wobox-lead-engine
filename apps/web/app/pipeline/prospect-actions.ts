@@ -2,20 +2,20 @@
 
 import { revalidatePath } from 'next/cache';
 import { searchLeads, scoreLeads, generateMessages } from '@wobox/skills';
-import type { Channel } from '@wobox/core';
+import type { Channel, Venture } from '@wobox/core';
 
-const VENTURES = new Set(['wobox_food', 'wobox_fashion', 'loop']);
-const CHANNELS = new Set(['instagram_dm', 'email', 'linkedin', 'whatsapp']);
+const VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop']);
+const CHANNELS = new Set<Channel>(['instagram_dm', 'email', 'linkedin', 'whatsapp']);
 
 /** Genera drafts (batch) para los qualified del venture elegido. */
 export async function generateMessagesAction(formData: FormData): Promise<string> {
-  const venture = String(formData.get('venture') ?? '');
-  const channel = String(formData.get('channel') ?? 'instagram_dm');
+  const venture = String(formData.get('venture') ?? '') as Venture;
+  const channel = String(formData.get('channel') ?? 'instagram_dm') as Channel;
   if (!VENTURES.has(venture)) return 'Venture inválido';
   if (!CHANNELS.has(channel)) return 'Canal inválido';
 
   try {
-    await generateMessages.run({ all: true, venture, channel: channel as Channel });
+    await generateMessages.run({ all: true, venture, channel });
   } catch (e) {
     return `Error: ${String(e).slice(0, 200)}`;
   }
@@ -27,7 +27,7 @@ export async function generateMessagesAction(formData: FormData): Promise<string
 
 /** Sourcing nuevos leads (Apollo) + scoring, para el venture elegido. */
 export async function prospectAction(formData: FormData): Promise<string> {
-  const venture = String(formData.get('venture') ?? '');
+  const venture = String(formData.get('venture') ?? '') as Venture;
   const limitRaw = Number.parseInt(String(formData.get('limit') ?? '25'), 10);
   if (!VENTURES.has(venture)) return 'Venture inválido';
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 && limitRaw <= 100 ? limitRaw : 25;
