@@ -36,6 +36,7 @@ export async function POST(req: Request) {
     });
 
     if (!person) return NextResponse.json({ error: 'Apollo no encontró el contacto' }, { status: 404 });
+    if (!person.email) return NextResponse.json({ error: 'Apollo encontró el contacto pero no tiene email público disponible' }, { status: 404 });
 
     const { error: uErr } = await db
       .from('contacts')
