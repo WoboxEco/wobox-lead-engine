@@ -32,6 +32,15 @@ importers:
       '@wobox/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@wobox/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
+      '@wobox/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
+      '@wobox/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
