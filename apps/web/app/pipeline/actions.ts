@@ -1,6 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@wobox/core';
+import { apollo } from '@wobox/integrations';
 import { revalidatePath } from 'next/cache';
 
 const VALID_STAGES = new Set([
@@ -44,6 +45,55 @@ export async function changeVenture(formData: FormData): Promise<void> {
     .update({ venture, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw new Error(error.message);
+
+  revalidatePath('/pipeline');
+  revalidatePath('/');
+}
+
+export async function unlockContact(formData: FormData): Promise<void> {
+  const contactId = String(formData.get('contactId') ?? '');
+  if (!contactId) throw new Error('missing contactId');
+
+  const db = createAdminClient();
+
+  const { data: contact, error: cErr } = await db
+    .from('contacts')
+    .select('id, name, role, companies(name, venture)')
+    .eq('id', contactId)
+    .single();
+  if (cErr || !contact) throw new Error('contacto no encontrado');
+
+  const c = contact as unknown as {
+    id: string;
+    name: string;
+    role: string | null;
+    companies: { name: string; venture: string } | null;
+  };
+
+  const firstName = c.name.split(' ')[0] ?? c.name;
+  const companyName = c.companies?.name ?? '';
+  const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
+
+  const person = await apollo.matchPerson({
+    firstName,
+    organizationName: companyName,
+    venture,
+    operation: 'unlock-contact',
+  });
+
+  if (!person) throw new Error('Apollo no encontró el contacto');
+
+  const { error: uErr } = await db
+    .from('contacts')
+    .update({
+      email: person.email ?? null,
+      linkedin_url: person.linkedin_url ?? null,
+      name: person.name ?? c.name,
+      role: person.title ?? c.role ?? null,
+      contact_source: 'apollo (unlocked)',
+    })
+    .eq('id', contactId);
+  if (uErr) throw new Error(uErr.message);
 
   revalidatePath('/pipeline');
   revalidatePath('/');
