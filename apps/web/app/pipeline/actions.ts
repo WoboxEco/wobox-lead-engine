@@ -50,67 +50,66 @@ export async function changeVenture(formData: FormData): Promise<void> {
   revalidatePath('/');
 }
 
-export async function unlockContact(formData: FormData): Promise<void> {
+export async function unlockContact(_prev: string | null, formData: FormData): Promise<string | null> {
   const contactId = String(formData.get('contactId') ?? '');
-  if (!contactId) throw new Error('missing contactId');
+  if (!contactId) return 'missing contactId';
 
-  const db = createAdminClient();
+  try {
+    const db = createAdminClient();
 
-  // Carga el contacto con empresa (necesitamos apollo_id de la empresa)
-  const { data: contact, error: cErr } = await db
-    .from('contacts')
-    .select('id, name, role, company_id, companies(name, venture, apollo_id)')
-    .eq('id', contactId)
-    .single();
-  if (cErr || !contact) throw new Error('contacto no encontrado');
+    const { data: contact, error: cErr } = await db
+      .from('contacts')
+      .select('id, name, role, company_id, companies(name, venture, apollo_id)')
+      .eq('id', contactId)
+      .single();
+    if (cErr || !contact) return 'Contacto no encontrado en DB';
 
-  const c = contact as unknown as {
-    id: string;
-    name: string;
-    role: string | null;
-    company_id: string;
-    companies: { name: string; venture: string; apollo_id: string | null } | null;
-  };
+    const c = contact as unknown as {
+      id: string;
+      name: string;
+      role: string | null;
+      company_id: string;
+      companies: { name: string; venture: string; apollo_id: string | null } | null;
+    };
 
-  const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
-  const apolloOrgId = c.companies?.apollo_id;
+    const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
+    const apolloOrgId = c.companies?.apollo_id;
 
-  let personId: string | undefined;
+    let personId: string | undefined;
+    if (apolloOrgId) {
+      const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
+      const firstNameLower = c.name.split(' ')[0]?.toLowerCase() ?? '';
+      const match = teasers.find((t) => (t.first_name ?? '').toLowerCase() === firstNameLower);
+      personId = match?.id;
+    }
 
-  // Si tenemos el apollo_id de la empresa, buscamos el DM por nombre para obtener el personId
-  if (apolloOrgId) {
-    const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
-    const firstName = c.name.split(' ')[0]?.toLowerCase() ?? '';
-    const match = teasers.find((t) =>
-      (t.first_name ?? '').toLowerCase() === firstName,
-    );
-    personId = match?.id;
+    const firstName = c.name.split(' ')[0] ?? c.name;
+    const person = await apollo.matchPerson({
+      ...(personId ? { personId } : { firstName, organizationName: c.companies?.name ?? '' }),
+      venture,
+      operation: 'unlock-contact',
+    });
+
+    if (!person) return 'Apollo no encontró el contacto (puede no tener email público)';
+
+    const { error: uErr } = await db
+      .from('contacts')
+      .update({
+        email: person.email ?? null,
+        linkedin_url: person.linkedin_url ?? null,
+        name: person.name ?? c.name,
+        role: person.title ?? c.role ?? null,
+        contact_source: 'apollo (unlocked)',
+      })
+      .eq('id', contactId);
+    if (uErr) return `DB error: ${uErr.message}`;
+
+    revalidatePath('/pipeline');
+    revalidatePath('/');
+    return null;
+  } catch (err) {
+    return `Error inesperado: ${String(err).replace('Error: ', '').slice(0, 150)}`;
   }
-
-  // Llamamos matchPerson con el personId (si lo encontramos) o con firstName + companyName
-  const firstName = c.name.split(' ')[0] ?? c.name;
-  const person = await apollo.matchPerson({
-    ...(personId ? { personId } : { firstName, organizationName: c.companies?.name ?? '' }),
-    venture,
-    operation: 'unlock-contact',
-  });
-
-  if (!person) throw new Error('Apollo no encontró el contacto');
-
-  const { error: uErr } = await db
-    .from('contacts')
-    .update({
-      email: person.email ?? null,
-      linkedin_url: person.linkedin_url ?? null,
-      name: person.name ?? c.name,
-      role: person.title ?? c.role ?? null,
-      contact_source: 'apollo (unlocked)',
-    })
-    .eq('id', contactId);
-  if (uErr) throw new Error(uErr.message);
-
-  revalidatePath('/pipeline');
-  revalidatePath('/');
 }
 
 export async function discardCompany(formData: FormData): Promise<void> {

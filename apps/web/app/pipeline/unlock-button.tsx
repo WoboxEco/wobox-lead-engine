@@ -1,25 +1,13 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useActionState } from 'react';
 import { unlockContact } from './actions';
 
 export function UnlockButton({ contactId }: { contactId: string }) {
-  const [isPending, startTransition] = useTransition();
-
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    startTransition(async () => {
-      try {
-        await unlockContact(formData);
-      } catch (err) {
-        alert(`Error al desbloquear: ${String(err).replace('Error: ', '')}`);
-      }
-    });
-  }
+  const [error, dispatch, isPending] = useActionState(unlockContact, null);
 
   return (
-    <form onSubmit={handleSubmit} className="inline">
+    <form action={dispatch} className="inline-flex items-center gap-1">
       <input type="hidden" name="contactId" value={contactId} />
       <button
         type="submit"
@@ -29,6 +17,11 @@ export function UnlockButton({ contactId }: { contactId: string }) {
       >
         {isPending ? '⏳' : '🔓'}
       </button>
+      {error && (
+        <span className="text-[11px] text-[oklch(0.75_0.18_25)]" title={error}>
+          ✗
+        </span>
+      )}
     </form>
   );
 }
