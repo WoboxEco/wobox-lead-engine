@@ -7,7 +7,12 @@ loadDotenv({ path: resolve(__dirname, '../../.env') });
 
 const config: NextConfig = {
   reactStrictMode: true,
-  transpilePackages: ['@wobox/core'],
+  transpilePackages: ['@wobox/core', '@wobox/skills', '@wobox/prompts', '@wobox/integrations'],
+  // Incluye los .md de prompts en el output de Vercel (file tracing los omite por default)
+  outputFileTracingIncludes: {
+    '/app/pipeline/page': ['../../packages/prompts/**/*.md'],
+    '/app/drafts/page': ['../../packages/prompts/**/*.md'],
+  },
   env: {
     NEXT_PUBLIC_SUPABASE_URL: process.env.SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
