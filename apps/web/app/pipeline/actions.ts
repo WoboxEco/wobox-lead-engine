@@ -75,14 +75,18 @@ export async function unlockContact(_prev: string | null, formData: FormData): P
     const venture = (c.companies?.venture ?? 'wobox_food') as 'wobox_food' | 'wobox_fashion' | 'loop';
     const firstName = c.name.split(' ')[0] ?? c.name;
 
-    const person = await apollo.matchPerson({
-      firstName,
-      organizationName: c.companies?.name ?? '',
-      venture,
-      operation: 'unlock-contact',
-    });
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+    const person = await Promise.race([
+      apollo.matchPerson({
+        firstName,
+        organizationName: c.companies?.name ?? '',
+        venture,
+        operation: 'unlock-contact',
+      }),
+      timeout,
+    ]);
 
-    if (!person) return 'Apollo no encontró el contacto (puede no tener email público)';
+    if (!person) return 'Apollo no encontró el contacto o tardó demasiado. Intentá de nuevo.';
 
     const { error: uErr } = await db
       .from('contacts')

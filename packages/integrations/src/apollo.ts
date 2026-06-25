@@ -189,7 +189,8 @@ export async function matchPerson(params: MatchPersonParams): Promise<ApolloPers
   if (params.lastName) body.last_name = params.lastName;
   if (params.organizationName) body.organization_name = params.organizationName;
 
-  const res = await apolloFetch<{ person: ApolloPersonFull | null }>('/people/match', body);
+  // Sin reintentos para uso interactivo (evita timeouts en Vercel hobby)
+  const res = await apolloFetch<{ person: ApolloPersonFull | null }>('/people/match', body, 0);
 
   await trackUsage({
     operation: params.operation ?? 'people.match',
@@ -228,7 +229,7 @@ function normalizeDomain(input: string): string {
   return (base.split('/')[0] ?? '').split('?')[0] ?? '';
 }
 
-async function apolloFetch<T>(path: string, body: unknown): Promise<T> {
+async function apolloFetch<T>(path: string, body: unknown, retries = 3): Promise<T> {
   const e = env();
   if (!e.APOLLO_API_KEY) {
     throw new Error('APOLLO_API_KEY not configured');
@@ -250,7 +251,7 @@ async function apolloFetch<T>(path: string, body: unknown): Promise<T> {
       }
       return (await res.json()) as T;
     },
-    { retries: 3, minTimeout: 1000, factor: 2 },
+    { retries, minTimeout: 1000, factor: 2 },
   );
 }
 
