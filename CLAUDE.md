@@ -104,9 +104,15 @@ pnpm lint                          # Biome
 | Ruta | Qué muestra |
 |------|-------------|
 | `/` | Counts por stage + por venture |
-| `/pipeline` | Tabla filtrable (venture/stage/min-score) + server actions para cambiar stage y descartar |
+| `/pipeline` | Tabla filtrable (venture/stage/min-score) + server actions para cambiar stage y descartar. Incluye botón **+ Prospect** (sourcing Apollo + scoring), **Generar mensajes**, y columna **Contactos** con botón 🔓 por DM para revelar email vía Apollo (2 pasos: searchDecisionMakers + matchPerson, 1 crédito). |
 | `/drafts` | Cards de drafts con approve/discard/edit/send inline |
 | `/nurture` | Vista `nurture_today` agrupada por founder |
+
+### API routes del dashboard
+
+| Endpoint | Qué hace |
+|----------|----------|
+| `POST /api/unlock-contact` | Busca el person ID en Apollo por `orgId` + nombre, luego revela email con `matchPerson`. Gasta 1 crédito Apollo. |
 
 ## Convenciones
 
@@ -132,7 +138,7 @@ CALENDLY_SIGNING_KEY                                           edge function
 
 `health-check` te dice cuál falta.
 
-## Deployment (estado 2026-04-29)
+## Deployment (estado 2026-06-26)
 
 | Pieza | Estado | Detalle |
 |-------|--------|---------|
@@ -142,6 +148,12 @@ CALENDLY_SIGNING_KEY                                           edge function
 | Edge Function Calendly | Active en Supabase | `/functions/v1/calendly-webhook` |
 | pg_cron | 2 jobs activos | `reactivate-discarded` (lunes 09:00 UTC), `stale-contacted` (diario 10:00 UTC) |
 | Webhook Calendly auto | Bloqueado | Free plan no permite API webhooks (workaround manual desde /pipeline) |
+
+### Notas de arquitectura del dashboard (Vercel Hobby)
+
+- Las skills (`@wobox/skills`, `@wobox/prompts`, `@wobox/integrations`) están en `transpilePackages` y declaradas como `dependencies` de `apps/web` para que Next.js las bundlee correctamente.
+- Los archivos `.md` de prompts se incluyen vía `outputFileTracingIncludes` en `next.config.ts`.
+- Las server actions que llaman APIs externas (Apollo) usan **API routes** (`/api/*`) en lugar de server actions para evitar el timeout de 10s de Vercel Hobby. Las llamadas a Apollo usan `retries: 0` en `apolloFetch` para no acumular tiempo con reintentos.
 
 ## Pendientes opcionales
 
