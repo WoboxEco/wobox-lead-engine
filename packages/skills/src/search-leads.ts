@@ -112,11 +112,6 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
     throw new Error('search-leads: --venture es requerido (wobox_food | wobox_fashion | loop)');
   }
   const venture = opts.venture as SearchLeadsVenture;
-  if (venture === 'loop') {
-    throw new Error(
-      'search-leads: loop usa Apify (search-leads-web), no Apollo. Usá pnpm skill search-leads-web --subsector=... --neighborhood=...',
-    );
-  }
   if (!(venture in DEFAULTS_BY_VENTURE)) {
     throw new Error(
       `search-leads: venture invalida "${opts.venture}". Esperado: wobox_food | wobox_fashion`,
