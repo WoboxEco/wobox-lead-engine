@@ -4,7 +4,7 @@ import { apollo } from '@wobox/integrations';
 // Default: Haiku. Mantenido por parity con otras skills aunque hoy no se usa Claude aca.
 export const DEFAULT_MODEL = 'haiku';
 
-export type SearchLeadsVenture = 'wobox_food' | 'wobox_fashion' | 'loop';
+export type SearchLeadsVenture = 'wobox_food' | 'wobox_fashion';
 
 export interface SearchLeadsOptions {
   venture?: string;
@@ -61,6 +61,7 @@ const COMMON_EXCLUDES = [
   'information technology',
 ];
 
+// loop usa search-leads-web (Apify Google Maps), no Apollo.
 const DEFAULTS_BY_VENTURE: Record<
   SearchLeadsVenture,
   {
@@ -101,14 +102,6 @@ const DEFAULTS_BY_VENTURE: Record<
     locations: ['Argentina'],
     excludeIndustries: COMMON_EXCLUDES,
   },
-  // Loop cadenas: gastronomia + wellness + retail con multiples locales.
-  loop: {
-    industries: ['restaurants', 'health wellness and fitness', 'retail', 'consumer services'],
-    keywords: 'cadena chain franchise fitness restaurant wellness',
-    employeeRanges: ['51,200', '201,500'],
-    locations: ['Argentina'],
-    excludeIndustries: COMMON_EXCLUDES,
-  },
 };
 
 export async function run(opts: SearchLeadsOptions): Promise<void> {
@@ -119,9 +112,14 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
     throw new Error('search-leads: --venture es requerido (wobox_food | wobox_fashion | loop)');
   }
   const venture = opts.venture as SearchLeadsVenture;
+  if (venture === 'loop') {
+    throw new Error(
+      'search-leads: loop usa Apify (search-leads-web), no Apollo. Usá pnpm skill search-leads-web --subsector=... --neighborhood=...',
+    );
+  }
   if (!(venture in DEFAULTS_BY_VENTURE)) {
     throw new Error(
-      `search-leads: venture invalida "${opts.venture}". Esperado: wobox_food | wobox_fashion | loop`,
+      `search-leads: venture invalida "${opts.venture}". Esperado: wobox_food | wobox_fashion`,
     );
   }
 
