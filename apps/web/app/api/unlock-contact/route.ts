@@ -32,7 +32,13 @@ export async function POST(req: Request) {
     // Si tenemos el ID de la org en Apollo, buscamos el person ID exacto primero
     let personId: string | undefined;
     if (apolloOrgId) {
-      const teasers = await apollo.searchDecisionMakers({ orgId: apolloOrgId });
+      // Busca sin filtro de títulos para encontrar cualquier contacto de la empresa
+      const teasers = await apollo.searchDecisionMakers({
+        orgId: apolloOrgId,
+        titles: ['Manager', 'Director', 'CEO', 'Founder', 'Owner', 'Head', 'VP', 'Chief',
+                 'Commercial', 'Gerente', 'Director', 'Presidente', 'Socio', 'Partner'],
+        perPage: 25,
+      });
       const match = teasers.find(
         (t) => (t.first_name ?? '').toLowerCase() === firstName.toLowerCase(),
       );
