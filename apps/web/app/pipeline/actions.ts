@@ -1,18 +1,10 @@
 'use server';
 
-import { createAdminClient } from '@wobox/core';
+import { DEAL_STAGES, STAGES, createAdminClient } from '@wobox/core';
 import { apollo } from '@wobox/integrations';
 import { revalidatePath } from 'next/cache';
 
-const VALID_STAGES = new Set([
-  'new',
-  'enriched',
-  'qualified',
-  'nurturing',
-  'contacted',
-  'meeting_booked',
-  'discarded',
-]);
+const VALID_STAGES = new Set<string>([...STAGES, ...DEAL_STAGES]);
 
 const VALID_VENTURES = new Set(['wobox_food', 'wobox_fashion', 'loop']);
 
@@ -23,11 +15,26 @@ export async function changeStage(formData: FormData): Promise<void> {
   if (!VALID_STAGES.has(stage)) throw new Error(`stage invalido: ${stage}`);
 
   const db = createAdminClient();
+  const { data: prev } = await db.from('companies').select('stage').eq('id', id).single();
+  const fromStage = (prev as { stage: string } | null)?.stage ?? null;
+
   const { error } = await db
     .from('companies')
-    .update({ stage, updated_at: new Date().toISOString() })
+    .update({ stage, stage_entered_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw new Error(error.message);
+
+  if (fromStage && fromStage !== stage) {
+    await db.from('interactions').insert({
+      company_id: id,
+      type: 'status_change',
+      channel: 'internal',
+      content: `${fromStage} -> ${stage}`,
+      ai_generated: false,
+      outcome: 'pending',
+      metadata: { from_stage: fromStage, to_stage: stage },
+    } as never);
+  }
 
   revalidatePath('/pipeline');
   revalidatePath('/');

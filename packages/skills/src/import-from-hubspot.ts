@@ -26,7 +26,7 @@ const SKIP_LIFECYCLE = new Set(['customer', 'subscriber', 'evangelist']);
 
 // Heuristica de venture por nombre. Match en orden: loop -> wobox_food -> wobox_fashion.
 // Si nada matchea, cae al --venture default.
-const VENTURE_KEYWORDS: Array<{ venture: Venture; keywords: string[] }> = [
+export const VENTURE_KEYWORDS: Array<{ venture: Venture; keywords: string[] }> = [
   {
     venture: 'loop',
     keywords: [
@@ -123,7 +123,7 @@ const VENTURE_KEYWORDS: Array<{ venture: Venture; keywords: string[] }> = [
   },
 ];
 
-function guessVentureFromName(name: string | null | undefined): Venture | null {
+export function guessVentureFromName(name: string | null | undefined): Venture | null {
   if (!name) return null;
   const lower = name.toLowerCase();
   for (const { venture, keywords } of VENTURE_KEYWORDS) {
