@@ -14,6 +14,16 @@ const STAGES_ORDER = [
   'discarded',
 ] as const;
 
+const DEAL_STAGES_ORDER = [
+  'deal_sin_contacto',
+  'deal_contacto',
+  'deal_presentacion',
+  'deal_negociacion',
+  'deal_onboarding',
+  'deal_ganado',
+  'deal_perdido',
+] as const;
+
 const STAGE_LABELS: Record<string, string> = {
   new: 'Nuevas',
   enriched: 'Enriquecidas',
@@ -22,6 +32,13 @@ const STAGE_LABELS: Record<string, string> = {
   contacted: 'Contactadas',
   meeting_booked: 'Meetings',
   discarded: 'Descartadas',
+  deal_sin_contacto: 'Sin contacto',
+  deal_contacto: 'Contacto',
+  deal_presentacion: 'Presentacion',
+  deal_negociacion: 'Negociacion',
+  deal_onboarding: 'Onboarding',
+  deal_ganado: 'Ganados',
+  deal_perdido: 'Perdidos',
 };
 
 const VENTURE_LABELS: Record<string, string> = {
@@ -82,6 +99,16 @@ export default async function HomePage() {
         <SectionHeader title="Por stage" subtitle="Distribucion del pipeline" />
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 mt-4">
           {STAGES_ORDER.map((s) => (
+            <StageCard key={s} stage={s} value={byStage.get(s) ?? 0} />
+          ))}
+        </div>
+      </section>
+
+      {/* Deals (post-meeting, reemplaza al pipeline de HubSpot) */}
+      <section>
+        <SectionHeader title="Deals" subtitle="Pipeline de ventas post-meeting" />
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 mt-4">
+          {DEAL_STAGES_ORDER.map((s) => (
             <StageCard key={s} stage={s} value={byStage.get(s) ?? 0} />
           ))}
         </div>

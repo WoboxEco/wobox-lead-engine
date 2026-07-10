@@ -9,6 +9,8 @@ import { VentureSelect } from './venture-select';
 
 export const dynamic = 'force-dynamic';
 
+// Leads Engine: solo stages de prospeccion. Los deal_* stages viven en /crm —
+// separacion por stage, no por tabla (ver domain.ts STAGES vs DEAL_STAGES).
 const ALL_STAGES = [
   'new',
   'enriched',
@@ -19,6 +21,9 @@ const ALL_STAGES = [
   'discarded',
 ];
 
+// Opcion extra solo en el selector de fila: graduar un meeting_booked al CRM.
+const HANDOFF_STAGE = 'deal_sin_contacto';
+
 const STAGE_LABELS: Record<string, string> = {
   new: 'new',
   enriched: 'enriched',
@@ -27,6 +32,7 @@ const STAGE_LABELS: Record<string, string> = {
   contacted: 'contacted',
   meeting_booked: 'meeting',
   discarded: 'discarded',
+  deal_sin_contacto: '→ pasar a CRM',
 };
 
 const VENTURE_LABELS: Record<string, string> = {
@@ -55,7 +61,12 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     .order('created_at', { ascending: false })
     .limit(200);
   if (venture) q = q.eq('venture', venture);
-  if (stage) q = q.eq('stage', stage);
+  if (stage) {
+    q = q.eq('stage', stage);
+  } else {
+    // Sin filtro explicito: no mezclar companies que ya graduaron al CRM (deal_* stages).
+    q = q.in('stage', ALL_STAGES);
+  }
 
   const { data, error } = await q;
 
@@ -264,9 +275,12 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                           >
                             {ALL_STAGES.map((s) => (
                               <option key={s} value={s}>
-                                {s.replace('_', ' ')}
+                                {STAGE_LABELS[s] ?? s.replace('_', ' ')}
                               </option>
                             ))}
+                            {r.stage === 'meeting_booked' ? (
+                              <option value={HANDOFF_STAGE}>{STAGE_LABELS[HANDOFF_STAGE]}</option>
+                            ) : null}
                           </select>
                           <button
                             type="submit"

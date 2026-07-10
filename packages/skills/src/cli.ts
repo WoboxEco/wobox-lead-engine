@@ -10,6 +10,7 @@ import * as generateMessages from './generate-messages.js';
 import * as healthCheck from './health-check.js';
 import * as importCsv from './import-csv.js';
 import * as importFromHubspot from './import-from-hubspot.js';
+import * as importHubspotCsv from './import-hubspot-csv.js';
 import * as nurtureSequence from './nurture-sequence.js';
 import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
@@ -100,6 +101,21 @@ program
   .option('--limit <n>', 'Procesar solo N companies en vez de iterar todas')
   .option('--dry-run', 'No insertar nada, solo loguear')
   .action(importFromHubspot.run);
+
+program
+  .command('import-hubspot-csv')
+  .description(
+    'Migracion one-off desde CSVs exportados de HubSpot (companies/contacts/deals/notes). ' +
+      'Deals actualizan el stage de la company matcheada, no crean entidad nueva.',
+  )
+  .option('--companies <path>', 'CSV export de Companies')
+  .option('--contacts <path>', 'CSV export de Contacts')
+  .option('--deals <path>', 'CSV export de Deals')
+  .option('--notes <path>', 'CSV export de Notes/Engagements')
+  .option('--default-venture <venture>', 'Fallback si no matchea heuristica de venture')
+  .option('--limit <n>', 'Procesar solo N filas por archivo (debug)')
+  .option('--dry-run', 'No insertar/actualizar nada, solo loguear')
+  .action(importHubspotCsv.run);
 
 program
   .command('sourcing-cas')

@@ -2,6 +2,7 @@ import {
   CalendarClock,
   CircleUser,
   Files,
+  Handshake,
   KanbanSquare,
   LayoutDashboard,
   LogOut,
@@ -21,13 +22,11 @@ interface NavItem {
   description?: string;
 }
 
-const NAV_TOP: NavItem[] = [
-  { href: '/', label: 'Pipeline', icon: LayoutDashboard, description: 'Resumen global' },
+// Leads Engine: sourcing, enrichment, scoring, outreach — hasta meeting_booked.
+const NAV_ENGINE: NavItem[] = [
+  { href: '/', label: 'Resumen', icon: LayoutDashboard, description: 'Funnel global' },
   { href: '/pipeline', label: 'Companies', icon: KanbanSquare, description: 'Tabla detallada' },
   { href: '/drafts', label: 'Drafts', icon: Files, description: 'Mensajes por aprobar' },
-];
-
-const NAV_OPS: NavItem[] = [
   {
     href: '/nurture',
     label: 'Nurture hoy',
@@ -41,6 +40,11 @@ const NAV_OPS: NavItem[] = [
     description: 'KPIs cross-venture',
   },
   { href: '/campaigns', label: 'Campaigns', icon: Megaphone, description: 'Iniciativas activas' },
+];
+
+// CRM: pipeline de ventas post-meeting (reemplaza a HubSpot), separado por venture.
+const NAV_CRM: NavItem[] = [
+  { href: '/crm', label: 'Deals', icon: Handshake, description: 'Food / Fashion / Loop' },
 ];
 
 export function Sidebar({ userEmail, theme }: { userEmail: string | null; theme: Theme }) {
@@ -59,8 +63,8 @@ export function Sidebar({ userEmail, theme }: { userEmail: string | null; theme:
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
-        <NavSection title="Pipeline" items={NAV_TOP} />
-        <NavSection title="Operacion" items={NAV_OPS} />
+        <NavSection title="CRM" items={NAV_CRM} />
+        <NavSection title="Leads Engine" items={NAV_ENGINE} />
       </nav>
 
       {userEmail ? (

@@ -14,6 +14,20 @@ export const STAGES = [
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
+// Deal stages: reemplazan a HubSpot como fuente de verdad del pipeline de ventas
+// post-meeting. Un company entra aca desde meeting_booked, o directo si el sales
+// team lo carga manualmente (equivalente a como cargaban en HubSpot).
+export const DEAL_STAGES = [
+  'deal_sin_contacto',
+  'deal_contacto',
+  'deal_presentacion',
+  'deal_negociacion',
+  'deal_onboarding',
+  'deal_ganado',
+  'deal_perdido',
+] as const;
+export type DealStage = (typeof DEAL_STAGES)[number];
+
 export const BUYER_PERSONAS = ['BP1', 'BP2', 'BP3', 'BP4', 'BP5', 'BP6'] as const;
 export type BuyerPersona = (typeof BUYER_PERSONAS)[number];
 
@@ -28,6 +42,7 @@ export const CHANNELS = [
   'in_person',
   'instagram_dm',
   'calendly',
+  'internal',
 ] as const;
 export type Channel = (typeof CHANNELS)[number];
 
