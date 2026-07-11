@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { searchLeads, scoreLeads, generateMessages } from '@wobox/skills';
+import { searchLeads, searchLeadsWeb, scoreLeads, generateMessages } from '@wobox/skills';
 import type { Channel, Venture } from '@wobox/core';
 
 const VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop']);
@@ -25,7 +25,9 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   return 'Listo (ver /drafts)';
 }
 
-/** Sourcing nuevos leads (Apollo) + scoring, para el venture elegido. */
+/** Sourcing nuevos leads + scoring, para el venture elegido.
+ *  Loop usa Apify (search-leads-web); food/fashion usan Apollo (search-leads).
+ */
 export async function prospectAction(formData: FormData): Promise<string> {
   const venture = String(formData.get('venture') ?? '') as Venture;
   const limitRaw = Number.parseInt(String(formData.get('limit') ?? '25'), 10);
@@ -33,7 +35,11 @@ export async function prospectAction(formData: FormData): Promise<string> {
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 && limitRaw <= 100 ? limitRaw : 25;
 
   try {
-    await searchLeads.run({ venture, limit: String(limit) });
+    if (venture === 'loop') {
+      await searchLeadsWeb.run({ limit: String(limit) });
+    } else {
+      await searchLeads.run({ venture, limit: String(limit) });
+    }
   } catch (e) {
     return `Error en sourcing: ${String(e).slice(0, 200)}`;
   }
