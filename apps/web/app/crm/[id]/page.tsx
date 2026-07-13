@@ -1,5 +1,7 @@
 import { createAdminClient } from '@wobox/core';
+import { headers } from 'next/headers';
 import Link from 'next/link';
+import { getRole } from '../../../lib/auth/whitelist';
 import { getOwnerDirectory } from '../../../lib/owners';
 import { changeStage } from '../../pipeline/actions';
 import {
@@ -86,6 +88,26 @@ export default async function CompanyDetailPage({ params }: PageProps) {
 
   if (error || !company) {
     return <p className="text-muted">Empresa no encontrada.</p>;
+  }
+
+  // sales: solo puede ver companies donde es owner o co-owner.
+  const headerList = await headers();
+  const viewerEmail = headerList.get('x-user-email');
+  const role = getRole(viewerEmail);
+  if (role === 'sales') {
+    const ownId = owners.find(
+      (o) => o.email.toLowerCase() === (viewerEmail ?? '').toLowerCase(),
+    )?.id;
+    const coOwnerIdsCheck = new Set(
+      ((coOwnerRows as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id),
+    );
+    const isOwnerOrCoOwner =
+      ownId &&
+      ((company as { assigned_to: string | null }).assigned_to === ownId ||
+        coOwnerIdsCheck.has(ownId));
+    if (!isOwnerOrCoOwner) {
+      return <p className="text-muted">Empresa no encontrada.</p>;
+    }
   }
 
   type Company = {

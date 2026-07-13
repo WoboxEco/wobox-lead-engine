@@ -47,11 +47,19 @@ const NAV_CRM: NavItem[] = [
   { href: '/crm', label: 'Deals', icon: Handshake, description: 'Food / Fashion / Loop' },
 ];
 
-export function Sidebar({ userEmail, theme }: { userEmail: string | null; theme: Theme }) {
+export function Sidebar({
+  userEmail,
+  theme,
+  role,
+}: {
+  userEmail: string | null;
+  theme: Theme;
+  role?: 'admin' | 'sales' | null;
+}) {
   return (
     <aside className="hidden md:flex md:flex-col w-60 shrink-0 border-r border-[var(--border)] bg-[var(--surface)] sticky top-0 h-screen">
       <div className="px-5 py-6 border-b border-[var(--border)]">
-        <Link href="/" className="flex items-center gap-2.5 group">
+        <Link href={role === 'sales' ? '/crm' : '/'} className="flex items-center gap-2.5 group">
           <div className="size-8 rounded-lg bg-accent grid place-items-center font-bold text-[15px]">
             W
           </div>
@@ -64,7 +72,7 @@ export function Sidebar({ userEmail, theme }: { userEmail: string | null; theme:
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
         <NavSection title="CRM" items={NAV_CRM} />
-        <NavSection title="Leads Engine" items={NAV_ENGINE} />
+        {role !== 'sales' ? <NavSection title="Leads Engine" items={NAV_ENGINE} /> : null}
       </nav>
 
       {userEmail ? (

@@ -43,6 +43,11 @@ export async function createManualDeal(formData: FormData): Promise<void> {
   if (!contactEmail) throw new Error('Falta el email del contacto');
   if (!contactPhone) throw new Error('Falta el telefono del contacto');
 
+  const supabaseSession = await createSupabaseServerClient();
+  const {
+    data: { user: creator },
+  } = await supabaseSession.auth.getUser();
+
   const db = createAdminClient();
   const { data, error } = await db
     .from('companies')
@@ -58,6 +63,7 @@ export async function createManualDeal(formData: FormData): Promise<void> {
       stage,
       source: 'manual',
       stage_entered_at: new Date().toISOString(),
+      assigned_to: creator?.id ?? null,
     } as never)
     .select('id')
     .single();

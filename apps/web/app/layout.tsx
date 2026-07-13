@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import type { ReactNode } from 'react';
 import { MobileTopbar, Sidebar } from '../components/sidebar';
+import { getRole } from '../lib/auth/whitelist';
 import { getTheme } from './theme/actions';
 import './globals.css';
 
@@ -26,7 +27,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html lang="es" data-theme={theme}>
       <body>
         <div className="min-h-screen flex flex-col md:flex-row">
-          <Sidebar userEmail={userEmail} theme={theme} />
+          <Sidebar userEmail={userEmail} theme={theme} role={getRole(userEmail)} />
           <div className="flex-1 flex flex-col min-w-0">
             <MobileTopbar userEmail={userEmail} theme={theme} />
             <main className="flex-1 px-5 md:px-8 py-6 md:py-8 max-w-[1280px] w-full mx-auto">

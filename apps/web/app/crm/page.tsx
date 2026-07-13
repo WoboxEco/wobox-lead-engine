@@ -1,6 +1,8 @@
 import { createAdminClient } from '@wobox/core';
 import { Filter, X } from 'lucide-react';
+import { headers } from 'next/headers';
 import Link from 'next/link';
+import { getRole } from '../../lib/auth/whitelist';
 import { getOwnerDirectory } from '../../lib/owners';
 import { changeStage } from '../pipeline/actions';
 
@@ -46,6 +48,35 @@ export default async function CrmPage({ searchParams }: PageProps) {
 
   const db = createAdminClient();
 
+  const headerList = await headers();
+  const viewerEmail = headerList.get('x-user-email');
+  const role = getRole(viewerEmail);
+  const owners = await getOwnerDirectory();
+  const ownerById = new Map(owners.map((o) => [o.id, o.displayName]));
+
+  // sales: solo ve sus propias companies (owner o co-owner). admin ve todo.
+  let ownId: string | null = null;
+  let ownFilter: string | null = null;
+  if (role === 'sales') {
+    ownId =
+      owners.find((o) => o.email.toLowerCase() === (viewerEmail ?? '').toLowerCase())?.id ?? null;
+    if (ownId) {
+      const { data: coOwned } = await db
+        .from('company_co_owners')
+        .select('company_id')
+        .eq('user_id', ownId);
+      const coOwnedIds = ((coOwned as Array<{ company_id: string }> | null) ?? []).map(
+        (r) => r.company_id,
+      );
+      ownFilter =
+        coOwnedIds.length > 0
+          ? `assigned_to.eq.${ownId},id.in.(${coOwnedIds.join(',')})`
+          : `assigned_to.eq.${ownId}`;
+    } else {
+      ownFilter = 'assigned_to.eq.00000000-0000-0000-0000-000000000000'; // sin id propio: no mostrar nada
+    }
+  }
+
   let q = db
     .from('companies')
     .select(
@@ -55,13 +86,16 @@ export default async function CrmPage({ searchParams }: PageProps) {
     .order('stage_entered_at', { ascending: false })
     .limit(200);
   q = stage ? q.eq('stage', stage) : q.in('stage', DEAL_STAGES);
+  if (ownFilter) q = q.or(ownFilter);
 
-  const [{ data, error }, { data: funnelData }, owners] = await Promise.all([
-    q,
-    db.from('companies').select('stage').eq('venture', venture).in('stage', DEAL_STAGES),
-    getOwnerDirectory(),
-  ]);
-  const ownerById = new Map(owners.map((o) => [o.id, o.displayName]));
+  let funnelQ = db
+    .from('companies')
+    .select('stage')
+    .eq('venture', venture)
+    .in('stage', DEAL_STAGES);
+  if (ownFilter) funnelQ = funnelQ.or(ownFilter);
+
+  const [{ data, error }, { data: funnelData }] = await Promise.all([q, funnelQ]);
 
   if (error) {
     return <p className="text-muted">Error: {error.message}</p>;
