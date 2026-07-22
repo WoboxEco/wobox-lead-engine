@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { isAllowedEmail } from './lib/auth/whitelist';
+import { getRole, isAllowedEmail } from './lib/auth/whitelist';
 import { updateSupabaseSession } from './lib/supabase/middleware';
 
 const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/auth/forbidden'];
@@ -25,6 +25,14 @@ export async function middleware(request: NextRequest) {
   if (!isAllowedEmail(user.email)) {
     const url = request.nextUrl.clone();
     url.pathname = '/auth/forbidden';
+    return NextResponse.redirect(url);
+  }
+
+  // sales: solo /crm (sus deals). El resto del Leads Engine queda para admin.
+  if (getRole(user.email) === 'sales' && !pathname.startsWith('/crm')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/crm';
+    url.search = '';
     return NextResponse.redirect(url);
   }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { isAllowedEmail } from '../../../lib/auth/whitelist';
+import { getRole, isAllowedEmail } from '../../../lib/auth/whitelist';
 import { createSupabaseServerClient } from '../../../lib/supabase/server';
 
 export async function GET(request: NextRequest) {
@@ -25,5 +25,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL('/auth/forbidden', url.origin));
   }
 
-  return NextResponse.redirect(new URL('/', url.origin));
+  const landing = getRole(data.session.user.email) === 'sales' ? '/crm' : '/';
+  return NextResponse.redirect(new URL(landing, url.origin));
 }
