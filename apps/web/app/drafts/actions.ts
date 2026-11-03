@@ -1,6 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@wobox/core';
+import { deliver } from '@wobox/skills';
 import { revalidatePath } from 'next/cache';
 
 type MessageRow = {
@@ -108,6 +109,10 @@ export async function sendDraft(formData: FormData): Promise<void> {
   assertStatus(msg, ['draft', 'approved']);
 
   const db = createAdminClient();
+
+  // Envio real (email via SMTP). Si falla, tira y el draft queda sin marcar como sent.
+  await deliver.deliverMessage(db, msg);
+
   const now = new Date().toISOString();
 
   const { error: msgErr } = await db

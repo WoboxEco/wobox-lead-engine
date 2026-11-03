@@ -11,10 +11,18 @@ const VENTURES = [
 ];
 
 const CHANNELS = [
-  { value: 'instagram_dm', label: 'Instagram DM' },
   { value: 'email', label: 'Email' },
+  { value: 'instagram_dm', label: 'Instagram DM' },
   { value: 'linkedin', label: 'LinkedIn' },
   { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'phone', label: 'Llamada (guion)' },
+];
+
+const FASHION_SUBSECTORS = [
+  { value: 'todos', label: 'Todos' },
+  { value: 'ropa', label: 'Ropa' },
+  { value: 'calzado', label: 'Calzado' },
+  { value: 'muebles_deco', label: 'Muebles / Deco' },
 ];
 
 const selectClass =
@@ -31,8 +39,9 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
   const initialVenture = defaultVenture || 'wobox_fashion';
   const [prospectVenture, setProspectVenture] = useState(initialVenture);
   const [prospectLimit, setProspectLimit] = useState('25');
+  const [subsector, setSubsector] = useState('todos');
   const [msgVenture, setMsgVenture] = useState(initialVenture);
-  const [channel, setChannel] = useState('instagram_dm');
+  const [channel, setChannel] = useState('email');
 
   function runProspect() {
     setResult(null);
@@ -40,6 +49,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
     const fd = new FormData();
     fd.set('venture', prospectVenture);
     fd.set('limit', prospectLimit);
+    if (prospectVenture === 'wobox_fashion') fd.set('subsector', subsector);
     startTransition(async () => {
       const text = await prospectAction(fd);
       setResult({ which: 'prospect', text });
@@ -90,6 +100,23 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               ))}
             </select>
           </div>
+          {prospectVenture === 'wobox_fashion' ? (
+            <div className="flex flex-col gap-1">
+              <span className={labelClass}>Rubro</span>
+              <select
+                value={subsector}
+                onChange={(e) => setSubsector(e.target.value)}
+                disabled={isPending}
+                className={selectClass}
+              >
+                {FASHION_SUBSECTORS.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-1">
             <span className={labelClass}>Cantidad</span>
             <input
@@ -185,9 +212,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
         </div>
 
         {running === 'messages' ? (
-          <p className="text-[12.5px] text-muted">
-            Procesando… 1-2 min. No cierres la pestaña.
-          </p>
+          <p className="text-[12.5px] text-muted">Procesando… 1-2 min. No cierres la pestaña.</p>
         ) : null}
         {result?.which === 'messages' ? (
           <p className="text-[12.5px] text-muted-strong font-mono break-words">{result.text}</p>

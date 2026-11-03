@@ -99,7 +99,9 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
   const companies = (data as unknown as CompanyRow[]) ?? [];
 
   if (companies.length === 0) {
-    console.log(`No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`);
+    console.log(
+      `No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`,
+    );
     return;
   }
 
@@ -316,12 +318,25 @@ function buildVars(args: {
   };
 }
 
+const CHANNEL_FORMAT_RULES: Partial<Record<Channel, string>> = {
+  whatsapp: 'WhatsApp: maximo 4 oraciones, sin links, cerra con 1 sola pregunta.',
+  instagram_dm: 'Instagram DM: 3-4 oraciones, tono casual.',
+  linkedin: 'LinkedIn: maximo 5 oraciones.',
+  phone:
+    'Llamada: escribi un GUION en bullets (no un mensaje), con estas secciones: Apertura / Motivo / 2 preguntas / Cierre / Objecion "ya tenemos outlet" (con la respuesta sugerida).',
+};
+
 function buildSystemPrompt(venture: Venture, approach: ApproachType, channel: Channel): string {
   const product = venture === 'loop' ? 'Loop' : 'Wobox';
   const channelRule =
     channel === 'email'
-      ? 'FORMATO: primera linea "SUBJECT: <subject>", linea en blanco, despues "BODY: <cuerpo>".'
-      : 'FORMATO: SOLO el texto del mensaje. No escribas "SUBJECT:", "BODY:", ni ningun header. No uses comillas ni explicaciones meta.';
+      ? 'FORMATO: primera linea "SUBJECT: <subject>", linea en blanco, despues "BODY: <cuerpo>". El subject es corto (max 6 palabras), sin clickbait. Firma el cuerpo con "Sebastián, Wobox".'
+      : [
+          'FORMATO: SOLO el texto del mensaje. No escribas "SUBJECT:", "BODY:", ni ningun header. No uses comillas ni explicaciones meta.',
+          CHANNEL_FORMAT_RULES[channel] ?? '',
+        ]
+          .filter(Boolean)
+          .join(' ');
   return [
     `Sos un SDR de ${product}, equipo argentino.`,
     'Escribis en espanol rioplatense, directo y cercano, sin jerga corporativa.',

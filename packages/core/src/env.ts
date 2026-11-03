@@ -37,6 +37,11 @@ const envSchema = z.object({
 
   CALENDLY_SIGNING_KEY: z.string().min(1).optional(),
 
+  GMAIL_USER: z.string().email().optional(),
+  GMAIL_APP_PASSWORD: z.string().min(1).optional(),
+  EMAIL_FROM_NAME: z.string().default('Sebastián | Wobox'),
+  EMAIL_DAILY_LIMIT: z.coerce.number().int().positive().default(40),
+
   APP_BASE_URL: z.string().url().default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
