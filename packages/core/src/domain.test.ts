@@ -13,9 +13,12 @@ describe('isWoboxVenture', () => {
 });
 
 describe('scoringModelForVenture', () => {
-  it('devuelve scoring-wobox-v1 para ventures wobox', () => {
+  it('devuelve scoring-wobox-v1 para wobox_food', () => {
     expect(scoringModelForVenture('wobox_food')).toBe('scoring-wobox-v1');
-    expect(scoringModelForVenture('wobox_fashion')).toBe('scoring-wobox-v1');
+  });
+
+  it('devuelve scoring-wobox-fashion-v1 para wobox_fashion', () => {
+    expect(scoringModelForVenture('wobox_fashion')).toBe('scoring-wobox-fashion-v1');
   });
 
   it('devuelve scoring-loop-v1 para loop', () => {

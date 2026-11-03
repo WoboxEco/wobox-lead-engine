@@ -1,4 +1,5 @@
 import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
+import { deliverMessage } from './deliver.js';
 
 export interface ApproveMessageOptions {
   id?: string;
@@ -143,6 +144,12 @@ async function doSend(
   log: ReturnType<typeof createLogger>,
 ): Promise<void> {
   assertStatus(msg, ['draft', 'approved']);
+
+  // Envio real (email via SMTP). Si falla, tira y no se marca como sent.
+  const delivery = await deliverMessage(db, msg);
+  if (delivery.delivered) {
+    log.info({ id: msg.id, to: delivery.to, messageId: delivery.messageId }, 'email enviado');
+  }
 
   const now = new Date().toISOString();
 

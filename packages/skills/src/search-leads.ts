@@ -22,7 +22,39 @@ export interface SearchLeadsOptions {
    * porque sin llamar a la API no hay nada que previsualizar.
    */
   dryRun?: boolean;
+  /**
+   * Solo wobox_fashion: preset de rubro que pisa industries/keywords default.
+   * ropa | calzado | muebles_deco | todos (default: todos = ICP completo).
+   */
+  subsector?: string;
 }
+
+export const FASHION_SUBSECTORS = ['ropa', 'calzado', 'muebles_deco', 'todos'] as const;
+export type FashionSubsector = (typeof FASHION_SUBSECTORS)[number];
+
+// Presets por rubro dentro de wobox_fashion. 'todos' usa los defaults del venture.
+const FASHION_SUBSECTOR_PRESETS: Record<
+  Exclude<FashionSubsector, 'todos'>,
+  { industries: string[]; keywords: string }
+> = {
+  ropa: {
+    industries: ['apparel and fashion', 'retail apparel and fashion', 'fashion accessories'],
+    keywords: 'ropa indumentaria moda apparel clothing',
+  },
+  calzado: {
+    industries: ['footwear', 'retail apparel and fashion', 'sporting goods'],
+    keywords: 'calzado zapatillas zapatos footwear',
+  },
+  muebles_deco: {
+    industries: [
+      'furniture',
+      'home furnishings',
+      'retail furniture and home furnishings',
+      'interior design',
+    ],
+    keywords: 'muebles decoracion deco hogar textil furniture home',
+  },
+};
 
 // Titulos que tratamos como decision makers para la busqueda inicial.
 const DECISION_MAKER_TITLES = [
@@ -87,17 +119,18 @@ const DEFAULTS_BY_VENTURE: Record<
     locations: ['Argentina'],
     excludeIndustries: COMMON_EXCLUDES,
   },
-  // Wobox Fashion: marcas de moda con tienda fisica + e-commerce.
-  // ICP: brands con stock estacional (ropa, accesorios, calzado).
+  // Wobox Fashion: marcas de moda + muebles/deco con tienda fisica + e-commerce.
+  // ICP: brands con stock estacional o discontinuado (ropa, accesorios, calzado, muebles, deco).
   wobox_fashion: {
     industries: [
       'apparel and fashion',
       'retail apparel and fashion',
       'fashion accessories',
       'footwear',
-      'consumer goods',
+      'furniture',
+      'home furnishings',
     ],
-    keywords: 'apparel fashion clothing moda indumentaria',
+    keywords: 'apparel fashion clothing moda indumentaria calzado muebles decoracion',
     employeeRanges: ['11,50', '51,200'],
     locations: ['Argentina'],
     excludeIndustries: COMMON_EXCLUDES,
@@ -120,18 +153,47 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
 
   const defaults = DEFAULTS_BY_VENTURE[venture];
 
+  let presetIndustries = defaults.industries;
+  let presetKeywords = defaults.keywords;
+  const subsector = opts.subsector?.trim();
+  if (subsector) {
+    if (!(FASHION_SUBSECTORS as readonly string[]).includes(subsector)) {
+      throw new Error(
+        `search-leads: subsector invalido "${subsector}". Esperado: ${FASHION_SUBSECTORS.join(' | ')}`,
+      );
+    }
+    if (venture !== 'wobox_fashion') {
+      throw new Error('search-leads: --subsector solo aplica a venture=wobox_fashion');
+    }
+    if (subsector !== 'todos') {
+      const preset = FASHION_SUBSECTOR_PRESETS[subsector as Exclude<FashionSubsector, 'todos'>];
+      presetIndustries = preset.industries;
+      presetKeywords = preset.keywords;
+    }
+  }
+
   // CSV simple para industries / exclude / locations; ; para employeeRanges (los valores ya tienen ,).
-  const industries = parseCsv(opts.industries) ?? defaults.industries;
+  const industries = parseCsv(opts.industries) ?? presetIndustries;
   const employeeRanges = parseSemicolonList(opts.employeeRanges) ?? defaults.employeeRanges;
   const excludeIndustries = parseCsv(opts.excludeIndustries) ?? defaults.excludeIndustries;
   const locations = opts.region ? [opts.region] : defaults.locations;
-  const keywords = opts.keywords ?? defaults.keywords;
+  const keywords = opts.keywords ?? presetKeywords;
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
   const dryRun = !!opts.dryRun;
 
   log.info(
-    { venture, industries, keywords, employeeRanges, excludeIndustries, locations, perPage, dryRun },
+    {
+      venture,
+      subsector,
+      industries,
+      keywords,
+      employeeRanges,
+      excludeIndustries,
+      locations,
+      perPage,
+      dryRun,
+    },
     'apollo searchOrganizations',
   );
 

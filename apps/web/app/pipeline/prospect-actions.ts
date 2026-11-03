@@ -1,16 +1,17 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
-import { searchLeads, searchLeadsWeb, scoreLeads, generateMessages } from '@wobox/skills';
 import type { Channel, Venture } from '@wobox/core';
+import { generateMessages, scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
+import { revalidatePath } from 'next/cache';
 
 const VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop']);
-const CHANNELS = new Set<Channel>(['instagram_dm', 'email', 'linkedin', 'whatsapp']);
+const CHANNELS = new Set<Channel>(['instagram_dm', 'email', 'linkedin', 'whatsapp', 'phone']);
+const FASHION_SUBSECTORS = new Set(['ropa', 'calzado', 'muebles_deco', 'todos']);
 
 /** Genera drafts (batch) para los qualified del venture elegido. */
 export async function generateMessagesAction(formData: FormData): Promise<string> {
   const venture = String(formData.get('venture') ?? '') as Venture;
-  const channel = String(formData.get('channel') ?? 'instagram_dm') as Channel;
+  const channel = String(formData.get('channel') ?? 'email') as Channel;
   if (!VENTURES.has(venture)) return 'Venture inválido';
   if (!CHANNELS.has(channel)) return 'Canal inválido';
 
@@ -33,12 +34,18 @@ export async function prospectAction(formData: FormData): Promise<string> {
   const limitRaw = Number.parseInt(String(formData.get('limit') ?? '25'), 10);
   if (!VENTURES.has(venture)) return 'Venture inválido';
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 && limitRaw <= 100 ? limitRaw : 25;
+  const subsectorRaw = String(formData.get('subsector') ?? '').trim();
+  let subsector: string | undefined;
+  if (venture === 'wobox_fashion' && subsectorRaw) {
+    if (!FASHION_SUBSECTORS.has(subsectorRaw)) return 'Rubro inválido';
+    subsector = subsectorRaw;
+  }
 
   try {
     if (venture === 'loop') {
       await searchLeadsWeb.run({ limit: String(limit) });
     } else {
-      await searchLeads.run({ venture, limit: String(limit) });
+      await searchLeads.run({ venture, limit: String(limit), ...(subsector ? { subsector } : {}) });
     }
   } catch (e) {
     return `Error en sourcing: ${String(e).slice(0, 200)}`;

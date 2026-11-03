@@ -16,9 +16,9 @@ import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
 import * as searchLeads from './search-leads.js';
 import * as setupDatabase from './setup-database.js';
-import * as sourcingCas from './sourcing-cas.js';
 import * as showMetrics from './show-metrics.js';
 import * as showPipeline from './show-pipeline.js';
+import * as sourcingCas from './sourcing-cas.js';
 import * as syncHubspot from './sync-hubspot.js';
 
 const program = new Command();
@@ -63,6 +63,10 @@ program
   .option('--exclude-industries <csv>', 'Override exclusiones (csv)')
   .option('--region <name>', 'Override location (default: Argentina)')
   .option('--keywords <text>', 'Free text adicional')
+  .option(
+    '--subsector <rubro>',
+    'Solo wobox_fashion: ropa | calzado | muebles_deco | todos (default: todos)',
+  )
   .option('--campaign <name>', 'Asociar leads a una campana (se crea si no existe)')
   .option('--model <alias>', 'Override modelo (no usado actualmente, mantenido por parity)')
   .option(
@@ -124,10 +128,7 @@ program
   )
   .option('--limit <n>', 'Limite de companies a procesar')
   .option('--start-page <n>', 'Pagina inicial (default: 1)')
-  .option(
-    '--category <cat>',
-    'alimentos | servicios | productos-saludables (default: todas)',
-  )
+  .option('--category <cat>', 'alimentos | servicios | productos-saludables (default: todas)')
   .option('--stage <stage>', 'Stage de companies (default: new)')
   .option('--dry-run', 'No insertar, solo reportar')
   .action(sourcingCas.run);

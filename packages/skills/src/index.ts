@@ -11,3 +11,4 @@ export * as approveMessage from './approve-message.js';
 export * as syncHubspot from './sync-hubspot.js';
 export * as showPipeline from './show-pipeline.js';
 export * as showMetrics from './show-metrics.js';
+export * as deliver from './deliver.js';
