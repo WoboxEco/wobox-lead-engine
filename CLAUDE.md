@@ -45,8 +45,10 @@ generate-messages (Claude + prompt caching)
   ↓ message.status=draft
 approve-message (manual CLI o dashboard /drafts)
   ↓ status=approved → enviar → status=sent + interaction
-nurture-sequence (scheduler steps 2-4, 2/5/10 dias)
-  ↓ (lead acepta Calendly webhook)
+nurture-sequence (scheduler steps 2-4, 2/5/10 dias) — cron diario /api/cron/daily
+  ↓ auto_send en la campaña → follow-ups de email salen solos
+check-replies (IMAP) → replies + secuencia pausada → classify-reply (Haiku) → /inbox
+  ↓ (lead acepta Calendly webhook o "Agendé reunión" en /inbox)
 sync-hubspot (push meeting_booked, pull closed deals para flywheel)
 ```
 
@@ -88,7 +90,10 @@ pnpm lint                          # Biome
 | `check-warm-path` | Apollo (1 cr en `--auto-reveal`) | `--list`/`--mark` manual o `--auto` con API |
 | `generate-messages` | Claude | Draft por approach/venture/BP/canal |
 | `approve-message` | — | `--action=approve|edit|send|discard` |
-| `nurture-sequence` | Claude (step 2-4) | Scheduler drafts según calendario 2/5/10 |
+| `nurture-sequence` | Claude (step 2-4) | Scheduler drafts según calendario 2/5/10 (mismo canal que el paso previo; saltea `sequence_paused`) |
+| `check-replies` | Claude (Haiku, si clasifica) | Lee no vistos de INBOX (IMAP, 3 días), matchea `from` con `contacts.email`, inserta `replies`, interaction `replied`, pausa la secuencia. `--no-classify`, `--dry-run` |
+| `classify-reply` | Claude (Haiku) | `--id` o `--pending`: intent + acción sugerida. `not_interested` → discarded; `out_of_office` → despausa y reprograma |
+| `daily-followup` | Claude + SMTP | Lo mismo que el cron: replies → nurture → auto_send (`--budget-ms`, `--skip-nurture`, `--dry-run`) |
 | `sync-hubspot` | — | Push meeting_booked + pull closed deals |
 | `show-pipeline` / `show-metrics` | — | Lectura (Kanban + KPIs) |
 
@@ -109,6 +114,8 @@ pnpm lint                          # Biome
 | `/pipeline` | Tabla filtrable (venture/stage/min-score) + server actions para cambiar stage y descartar. Incluye botón **+ Prospect** (sourcing Apollo + scrape de canales + scoring, y después `/api/enrich` con Maps), **Enriquecer contactos**, **Generar mensajes**, y columna **Contactos** con íconos-link 📞 / WA / IG / ✉️ (o "—" si falta) más botón 🔓 por DM para revelar email vía Apollo (2 pasos: searchDecisionMakers + matchPerson, 1 crédito). |
 | `/drafts` | Cards de drafts con approve/discard/edit/send inline |
 | `/nurture` | Vista `nurture_today` agrupada por founder |
+| `/inbox` | Replies no manejadas con intent, cuerpo y sugerencia. Botones: **Agendé reunión** (meeting_booked), **Nurture 3 meses** (discarded + reactivation_date), **Descartar**, **Marcar manejado** |
+| `/campaigns` | Crear/pausar campañas + toggle **Envío automático** (`campaigns.auto_send`) |
 
 ### API routes del dashboard
 
@@ -121,6 +128,7 @@ pnpm lint                          # Biome
 | `POST /api/rescore-discarded` | Sin `ids`: lista candidatas (fashion discarded, score 35–49). Con `ids` (máx 2): re-puntúa con v2. |
 | `POST /api/unlock-contact` | Busca el person ID en Apollo por `orgId` + nombre, luego revela email con `matchPerson`. Gasta 1 crédito Apollo. |
 | `POST /api/enrich` | `{ venture?, limit?, maps? }`. Canales de contacto para companies con `enriched_at` null: scrape website + Google Maps si falta teléfono (tope 10/corrida, `maxDuration=60`). Registra Maps en `api_usage`. |
+| `GET /api/cron/daily` | Cron diario (Vercel Cron, `0 12 * * 1-5` = 9:00 ART lun-vie). Exige `Authorization: Bearer $CRON_SECRET`. Ver "Follow-up automático". |
 
 ### Canales de contacto (company-level)
 
@@ -149,6 +157,10 @@ APOLLO_API_KEY (free tier)                                     check-warm-path -
 APIFY_API_TOKEN                                                search-leads-web, enrich-lead
 HUBSPOT_PRIVATE_APP_TOKEN                                      sync-hubspot
 CALENDLY_SIGNING_KEY                                           edge function
+GMAIL_USER + GMAIL_APP_PASSWORD                                envío SMTP + lectura IMAP de replies
+EMAIL_DAILY_LIMIT (default 40)                                 tope de emails/día (cuenta también los auto_send)
+CRON_SECRET                                                    /api/cron/daily (setear en Vercel; Vercel Cron lo manda como Bearer)
+CRON_TIME_BUDGET_MS (default 9000)                             presupuesto de tiempo del cron
 ```
 
 `health-check` te dice cuál falta.
@@ -161,7 +173,8 @@ CALENDLY_SIGNING_KEY                                           edge function
 | Dashboard Next.js | Live en Vercel | https://wobox-lead-engine-web.vercel.app |
 | Auth dashboard | Activo | Google OAuth + whitelist hardcoded en [apps/web/lib/auth/whitelist.ts](apps/web/lib/auth/whitelist.ts) |
 | Edge Function Calendly | Active en Supabase | `/functions/v1/calendly-webhook` |
-| pg_cron | 2 jobs activos | `reactivate-discarded` (lunes 09:00 UTC), `stale-contacted` (diario 10:00 UTC) |
+| pg_cron | 2 jobs activos | `reactivate-discarded` (lunes 09:00 UTC, desde 0012 también despausa la secuencia), `stale-contacted` (diario 10:00 UTC) |
+| Vercel Cron | 1 job (Hobby permite 1 diario) | `/api/cron/daily` lun-vie 12:00 UTC — requiere `CRON_SECRET` en Vercel |
 | Webhook Calendly auto | Bloqueado | Free plan no permite API webhooks (workaround manual desde /pipeline) |
 
 ### Notas de arquitectura del dashboard (Vercel Hobby)
@@ -173,11 +186,33 @@ CALENDLY_SIGNING_KEY                                           edge function
 
 ## Pendientes opcionales
 
-1. **Cron externo para `nurture-sequence` y `daily-review`** — hoy se corren manuales desde CLI.
-   - GitHub Actions con cron diario que ejecute `pnpm skill nurture-sequence` (gratis, fácil)
-   - Vercel Cron Functions (requiere exponer endpoint HTTP en `apps/web`)
+1. **Cron para `daily-review`** — sigue manual desde CLI (`nurture-sequence` ya corre en `/api/cron/daily`).
 2. **Upgrade Calendly Standard** — desbloquea webhooks automáticos (~10 min de wiring siguiendo los pasos de abajo).
 3. **Revocar PAT de Calendly** que se expuso en chat — generar uno nuevo cuando se haga el upgrade.
+
+## Follow-up automático (fase 3 outbound)
+
+Migration `0012_followup.sql`: `companies.sequence_paused` / `paused_reason` / `sequence_resume_at`, `campaigns.auto_send`, tabla `replies`.
+
+`/api/cron/daily` → `runDailyFollowup` (`packages/skills/src/daily-followup.ts`), en este orden:
+
+1. **Replies** (`check-replies`): IMAP `imap.gmail.com` con las mismas credenciales del SMTP, no vistos de los últimos 3 días (no marca como leído; dedup por Message-ID en `replies.external_id`). Si el `from` es un contacto: inserta `replies`, crea interaction `outcome='replied'` y pausa la secuencia (`sequence_paused=true, paused_reason='replied'`). Después clasifica con `classify-reply` si queda tiempo (si no, queda `intent=null` y se clasifica en la próxima corrida con `pnpm skill classify-reply --pending`).
+2. **Nurture** (`nurture-sequence`, todas las ventures): saltea pausadas y las que tienen `sequence_resume_at` futuro. Genera el siguiente paso en el mismo canal que el anterior.
+3. **Auto-send**: drafts `nurture` step ≥ 2 por **email** de companies cuya campaña (activa) tiene `auto_send=true` y no están pausadas → `deliver.sendMessage` (misma lógica que "Enviar" en `/drafts` y `approve-message --action=send`). El primer contacto sigue siendo manual. Respeta `EMAIL_DAILY_LIMIT`.
+
+**Tiempo**: Hobby corta a los 10s por default. Cada paso chequea el presupuesto (`CRON_TIME_BUDGET_MS`, default 9000) antes de cada operación cara (IMAP ~4s, generar ~7s, clasificar ~2.5s, enviar ~2s); si no alcanza, corta, lo pendiente queda para el día siguiente y la respuesta JSON trae `cutShort: true`. El route declara `maxDuration = 60`, así que se puede subir el presupuesto (p.ej. `CRON_TIME_BUDGET_MS=50000`) sin tocar código.
+
+**Clasificación** (`classify-reply`, Haiku, prompt `packages/prompts/replies/classify-reply-v1.md`): intent `interested | question | not_now | not_interested | out_of_office | other` + acción `agendar_calendly | responder_pregunta | nurture_3_meses | descartar | reprogramar`. Efectos automáticos: `not_interested` → stage `discarded`; `out_of_office` → despausa, `sequence_resume_at = hoy + N días` y marca la reply como manejada. El resto se decide en `/inbox`.
+
+Probar a mano:
+
+```bash
+pnpm skill check-replies --dry-run
+pnpm skill daily-followup --dry-run --budget-ms=60000
+curl -H "Authorization: Bearer $CRON_SECRET" https://wobox-lead-engine-web.vercel.app/api/cron/daily
+```
+
+Requisitos: IMAP habilitado en Gmail (Settings → Forwarding and POP/IMAP) y `CRON_SECRET` en las env vars de Vercel.
 
 ## Edge Function — Calendly webhook
 

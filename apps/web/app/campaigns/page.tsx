@@ -1,6 +1,6 @@
 import { createAdminClient, fetchAllRows } from '@wobox/core';
-import { CheckCircle2, Megaphone, Pause, Play, XCircle } from 'lucide-react';
-import { createCampaign, setCampaignStatus } from './actions';
+import { CheckCircle2, Megaphone, Pause, Play, Send, XCircle } from 'lucide-react';
+import { createCampaign, setCampaignAutoSend, setCampaignStatus } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +15,9 @@ export default async function CampaignsPage() {
 
   const { data: campaigns, error } = await db
     .from('campaigns')
-    .select('id, name, venture, status, vertical_focus, region_focus, started_at, ended_at')
+    .select(
+      'id, name, venture, status, vertical_focus, region_focus, started_at, ended_at, auto_send',
+    )
     .order('started_at', { ascending: false });
 
   if (error) {
@@ -36,6 +38,7 @@ export default async function CampaignsPage() {
     region_focus: string | null;
     started_at: string;
     ended_at: string | null;
+    auto_send: boolean | null;
   };
 
   const rows = (campaigns as unknown as Campaign[]) ?? [];
@@ -127,6 +130,12 @@ export default async function CampaignsPage() {
                     <th className="py-3 px-4">Focus</th>
                     <th className="py-3 px-4">Companies</th>
                     <th className="py-3 px-4">Periodo</th>
+                    <th
+                      className="py-3 px-4"
+                      title="El cron diario envia solo los follow-ups de email (steps 2-4)"
+                    >
+                      Envío automático
+                    </th>
                     <th className="py-3 px-4 text-right">Acciones</th>
                   </tr>
                 </thead>
@@ -174,6 +183,29 @@ export default async function CampaignsPage() {
                         <td className="py-3 px-4 text-[11.5px] text-muted mono">
                           {c.started_at.slice(0, 10)}
                           {c.ended_at ? <span> → {c.ended_at.slice(0, 10)}</span> : null}
+                        </td>
+                        <td className="py-3 px-4">
+                          <form action={setCampaignAutoSend}>
+                            <input type="hidden" name="id" value={c.id} />
+                            <input
+                              type="hidden"
+                              name="auto_send"
+                              value={c.auto_send ? 'false' : 'true'}
+                            />
+                            <button
+                              type="submit"
+                              role="switch"
+                              aria-checked={Boolean(c.auto_send)}
+                              className={`${btnSmall} ${c.auto_send ? 'border-accent text-accent' : 'text-muted'}`}
+                              title={
+                                c.auto_send
+                                  ? 'Activo: los follow-ups de email se envian solos. Click para apagar.'
+                                  : 'Apagado: los follow-ups quedan como draft. Click para activar.'
+                              }
+                            >
+                              <Send size={11} /> {c.auto_send ? 'Activo' : 'Apagado'}
+                            </button>
+                          </form>
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center justify-end gap-1.5">

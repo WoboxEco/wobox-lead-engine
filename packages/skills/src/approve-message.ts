@@ -1,5 +1,5 @@
 import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
-import { deliverMessage } from './deliver.js';
+import { sendMessage } from './deliver.js';
 
 export interface ApproveMessageOptions {
   id?: string;
@@ -145,52 +145,12 @@ async function doSend(
 ): Promise<void> {
   assertStatus(msg, ['draft', 'approved']);
 
-  // Envio real (email via SMTP). Si falla, tira y no se marca como sent.
-  const delivery = await deliverMessage(db, msg);
-  if (delivery.delivered) {
-    log.info({ id: msg.id, to: delivery.to, messageId: delivery.messageId }, 'email enviado');
+  // Envio real (email via SMTP) + marcado sent + interaction + stage. Si falla, tira.
+  const res = await sendMessage(db, msg);
+  if (res.delivered) {
+    log.info({ id: msg.id, to: res.to, messageId: res.messageId }, 'email enviado');
   }
-
-  const now = new Date().toISOString();
-
-  const { error: msgErr } = await db
-    .from('messages')
-    .update({ status: 'sent', sent_at: now })
-    .eq('id', msg.id);
-  if (msgErr) throw new Error(`update message: ${msgErr.message}`);
-
-  const interactionType = msg.channel === 'email' ? 'email' : 'message';
-  const { error: intErr } = await db.from('interactions').insert({
-    contact_id: msg.contact_id,
-    company_id: msg.company_id,
-    type: interactionType,
-    channel: msg.channel,
-    content: msg.body,
-    ai_generated: msg.body === msg.original_body,
-    outcome: 'sent',
-    performed_at: now,
-  });
-  if (intErr) throw new Error(`insert interaction: ${intErr.message}`);
-
-  // Stage transition: nurture se mantiene en 'nurturing'; direct/warm_intro pasa a 'contacted'.
-  const nextStage = msg.approach_type === 'nurture' ? 'nurturing' : 'contacted';
-
-  const { data: companyData } = await db
-    .from('companies')
-    .select('stage')
-    .eq('id', msg.company_id)
-    .single();
-  const currentStage = (companyData as { stage: string } | null)?.stage;
-
-  if (currentStage && !isStageDowngrade(currentStage, nextStage)) {
-    const { error: stageErr } = await db
-      .from('companies')
-      .update({ stage: nextStage, updated_at: now })
-      .eq('id', msg.company_id);
-    if (stageErr) log.warn({ err: stageErr }, 'no se pudo actualizar stage');
-  }
-
-  log.info({ id: msg.id, interactionType, nextStage }, 'mensaje enviado');
+  log.info({ id: msg.id, nextStage: res.nextStage }, 'mensaje enviado');
 }
 
 async function doDiscard(
@@ -207,21 +167,4 @@ function assertStatus(msg: MessageRow, allowed: MessageRow['status'][]): void {
   if (!allowed.includes(msg.status)) {
     throw new Error(`mensaje en status=${msg.status}, no se puede aplicar esta accion`);
   }
-}
-
-const STAGE_ORDER = [
-  'new',
-  'enriched',
-  'qualified',
-  'nurturing',
-  'contacted',
-  'meeting_booked',
-  'discarded',
-];
-
-function isStageDowngrade(current: string, next: string): boolean {
-  const ci = STAGE_ORDER.indexOf(current);
-  const ni = STAGE_ORDER.indexOf(next);
-  if (ci < 0 || ni < 0) return false;
-  return ni < ci;
 }

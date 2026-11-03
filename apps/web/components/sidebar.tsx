@@ -3,6 +3,7 @@ import {
   CircleUser,
   Files,
   Handshake,
+  Inbox,
   KanbanSquare,
   LayoutDashboard,
   LogOut,
@@ -27,6 +28,7 @@ const NAV_ENGINE: NavItem[] = [
   { href: '/', label: 'Resumen', icon: LayoutDashboard, description: 'Funnel global' },
   { href: '/pipeline', label: 'Companies', icon: KanbanSquare, description: 'Tabla detallada' },
   { href: '/drafts', label: 'Drafts', icon: Files, description: 'Mensajes por aprobar' },
+  { href: '/inbox', label: 'Inbox', icon: Inbox, description: 'Respuestas de leads' },
   {
     href: '/nurture',
     label: 'Nurture hoy',

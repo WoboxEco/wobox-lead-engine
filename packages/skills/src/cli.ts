@@ -3,9 +3,12 @@ import { logger } from '@wobox/core';
 import { Command } from 'commander';
 
 import * as approveMessage from './approve-message.js';
+import * as checkReplies from './check-replies.js';
 import * as checkWarmPath from './check-warm-path.js';
+import * as classifyReply from './classify-reply.js';
 import * as cleanupHubspotVenture from './cleanup-hubspot-venture.js';
 import * as enrichContacts from './enrich-contacts.js';
+import * as dailyFollowup from './daily-followup.js';
 import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
 import * as healthCheck from './health-check.js';
@@ -240,7 +243,39 @@ program
   .option('--limit <n>', 'Max companies por corrida (default: 50)', (v) => Number.parseInt(v, 10))
   .option('--dry-run', 'Solo reportar que haria, sin generar')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
-  .action(nurtureSequence.run);
+  .action(async (o: nurtureSequence.NurtureSequenceOptions) => {
+    await nurtureSequence.run(o);
+  });
+program
+  .command('check-replies')
+  .description('Lee respuestas por IMAP, las registra en replies, pausa la secuencia y clasifica')
+  .option('--since-days <n>', 'Ventana hacia atras en dias (default: 3)')
+  .option('--no-classify', 'No clasificar con Claude (despues: classify-reply --pending)')
+  .option('--dry-run', 'Solo listar respuestas detectadas, sin escribir')
+  .action(async (o: { sinceDays?: string; classify?: boolean; dryRun?: boolean }) => {
+    await checkReplies.run({
+      ...(o.sinceDays ? { sinceDays: o.sinceDays } : {}),
+      ...(o.classify === false ? { noClassify: true } : {}),
+      ...(o.dryRun ? { dryRun: true } : {}),
+    });
+  });
+program
+  .command('classify-reply')
+  .description('Clasifica replies con Claude (intent + accion sugerida) y aplica efectos')
+  .option('--id <uuid>', 'Reply especifica')
+  .option('--pending', 'Todas las replies sin intent')
+  .option('--limit <n>', 'Max replies en modo --pending (default: 20)')
+  .option('--model <alias>', 'Override del modelo (default: haiku)')
+  .action(classifyReply.run);
+program
+  .command('daily-followup')
+  .description('Lo mismo que el cron /api/cron/daily: replies -> nurture -> auto_send')
+  .option('--budget-ms <n>', 'Presupuesto de tiempo en ms (default: CRON_TIME_BUDGET_MS)')
+  .option('--skip-nurture', 'No generar pasos nuevos')
+  .option('--dry-run', 'No escribir ni enviar')
+  .action(async (o: dailyFollowup.DailyFollowupOptions) => {
+    await dailyFollowup.run(o);
+  });
 program
   .command('sync-hubspot')
   .description('Push meeting_booked a HubSpot + pull closed deals para flywheel')

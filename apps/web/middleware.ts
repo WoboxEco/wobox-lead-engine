@@ -3,7 +3,8 @@ import type { NextRequest } from 'next/server';
 import { getRole, isAllowedEmail } from './lib/auth/whitelist';
 import { updateSupabaseSession } from './lib/supabase/middleware';
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/auth/forbidden'];
+// /api/cron: sin sesion (lo llama Vercel Cron); el route valida CRON_SECRET.
+const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/auth/forbidden', '/api/cron'];
 
 function isPublic(pathname: string) {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
