@@ -1,6 +1,12 @@
 import { createAdminClient } from '@wobox/core';
-import { Check, Pencil, Send, Trash2, User } from 'lucide-react';
-import { approveDraft, discardDraft, saveEditAndApprove, sendDraft } from './actions';
+import { Check, Mail, Pencil, Send, Trash2, User } from 'lucide-react';
+import {
+  approveDraft,
+  discardDraft,
+  saveEditAndApprove,
+  sendDraft,
+  updateContactEmail,
+} from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +31,7 @@ export default async function DraftsPage({ searchParams }: PageProps) {
   const { data, error } = await db
     .from('messages')
     .select(
-      'id, subject, body, original_body, approach_type, channel, sequence_step, created_at, prompt_version, status, contacts(name, role, warm_path), companies(name, venture, buyer_persona)',
+      'id, subject, body, original_body, approach_type, channel, sequence_step, created_at, prompt_version, status, contact_id, contacts(id, name, role, email, warm_path), companies(name, venture, buyer_persona)',
     )
     .in('status', statuses)
     .order('created_at', { ascending: false })
@@ -96,6 +102,9 @@ export default async function DraftsPage({ searchParams }: PageProps) {
 
 function DraftCard({ row }: { row: DraftRow }) {
   const edited = row.body !== row.original_body;
+  const isEmail = row.channel === 'email';
+  const toEmail = (row.contacts?.email ?? '').trim();
+  const missingEmail = isEmail && !toEmail;
   return (
     <article className="surface p-5 hover:border-[var(--border-strong)] transition-colors">
       <header className="flex items-start justify-between gap-3 flex-wrap">
@@ -133,6 +142,33 @@ function DraftCard({ row }: { row: DraftRow }) {
         </div>
       </header>
 
+      {isEmail ? (
+        <form
+          action={updateContactEmail}
+          className="mt-4 flex items-center gap-2 flex-wrap text-[13px]"
+        >
+          <input type="hidden" name="contactId" value={row.contacts?.id ?? row.contact_id} />
+          <label
+            htmlFor={`to-${row.id}`}
+            className="text-muted text-[11px] uppercase tracking-[0.08em]"
+          >
+            Para:
+          </label>
+          <input
+            id={`to-${row.id}`}
+            type="email"
+            name="email"
+            required
+            defaultValue={toEmail}
+            placeholder="email@empresa.com"
+            className={`${inputCls} w-auto min-w-[260px] py-1`}
+          />
+          <button type="submit" className={btnSecondary}>
+            <Mail size={14} /> Guardar email
+          </button>
+        </form>
+      ) : null}
+
       {row.subject ? (
         <div className="mt-4 text-[13px] font-medium text-muted-strong">
           <span className="text-muted text-[11px] uppercase tracking-[0.08em] mr-2">Subject</span>
@@ -156,8 +192,14 @@ function DraftCard({ row }: { row: DraftRow }) {
 
         <form action={sendDraft}>
           <input type="hidden" name="id" value={row.id} />
-          <button type="submit" className={btnSecondary}>
-            <Send size={14} /> Marcar enviado
+          <button
+            type="submit"
+            disabled={missingEmail}
+            title={missingEmail ? 'Cargá el email en "Para:" para poder enviar' : undefined}
+            className={`${btnSecondary} disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            <Send size={14} />{' '}
+            {missingEmail ? 'Falta email' : isEmail ? 'Enviar' : 'Marcar enviado'}
           </button>
         </form>
 
@@ -209,7 +251,14 @@ type DraftRow = {
   created_at: string;
   prompt_version: string;
   status: string;
-  contacts: { name: string; role: string | null; warm_path: string | null } | null;
+  contact_id: string;
+  contacts: {
+    id: string;
+    name: string;
+    role: string | null;
+    email: string | null;
+    warm_path: string | null;
+  } | null;
   companies: { name: string; venture: string; buyer_persona: string | null } | null;
 };
 

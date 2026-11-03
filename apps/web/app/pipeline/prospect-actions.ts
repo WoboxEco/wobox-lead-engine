@@ -1,7 +1,13 @@
 'use server';
 
 import type { Channel, Venture } from '@wobox/core';
-import { generateMessages, scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
+import {
+  MAX_REVEALS_PER_RUN,
+  generateMessages,
+  scoreLeads,
+  searchLeads,
+  searchLeadsWeb,
+} from '@wobox/skills';
 import { revalidatePath } from 'next/cache';
 
 const VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop']);
@@ -15,15 +21,42 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   if (!VENTURES.has(venture)) return 'Venture inválido';
   if (!CHANNELS.has(channel)) return 'Canal inválido';
 
+  // El auto-reveal de emails (Apollo, máx MAX_REVEALS_PER_RUN) corre antes en
+  // /api/reveal-emails para no sumar latencia a esta server action (timeout Vercel Hobby).
+  // El cliente nos pasa el resultado para armar el resumen.
+  const isEmail = channel === 'email';
+  const revealed = toCount(formData.get('revealed'));
+  const credits = toCount(formData.get('credits'));
+  const revealError = String(formData.get('revealError') ?? '').trim();
+
+  let result: Awaited<ReturnType<typeof generateMessages.run>>;
   try {
-    await generateMessages.run({ all: true, venture, channel });
+    result = await generateMessages.run({
+      all: true,
+      venture,
+      channel,
+      ...(isEmail ? { requireEmail: true } : {}),
+    });
   } catch (e) {
     return `Error: ${String(e).slice(0, 200)}`;
   }
 
   revalidatePath('/drafts');
   revalidatePath('/pipeline');
-  return 'Listo (ver /drafts)';
+
+  if (!isEmail) return `${result.ok} drafts (ver /drafts)`;
+  const parts = [
+    `${revealed} emails revelados (${credits} créditos)`,
+    `${result.ok} drafts`,
+    `${result.noEmail} sin email`,
+  ];
+  if (revealError) parts.push(`reveal falló: ${revealError.slice(0, 120)}`);
+  return `${parts.join(', ')} (máx ${MAX_REVEALS_PER_RUN} reveals por corrida)`;
+}
+
+function toCount(v: FormDataEntryValue | null): number {
+  const n = Number.parseInt(String(v ?? '0'), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /** Sourcing nuevos leads + scoring, para el venture elegido.

@@ -152,3 +152,24 @@ export async function sendDraft(formData: FormData): Promise<void> {
   revalidatePath('/nurture');
   revalidatePath('/');
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Carga/corrige a mano el email del contacto de un draft de email. */
+export async function updateContactEmail(formData: FormData): Promise<void> {
+  const contactId = String(formData.get('contactId') ?? '');
+  const email = String(formData.get('email') ?? '')
+    .trim()
+    .toLowerCase();
+  if (!contactId) throw new Error('missing contactId');
+  if (!EMAIL_RE.test(email) || email.length > 254) throw new Error(`Email inválido: ${email}`);
+
+  const db = createAdminClient();
+  const { error } = await db
+    .from('contacts')
+    .update({ email, contact_source: 'manual' })
+    .eq('id', contactId);
+  if (error) throw new Error(error.message);
+  revalidatePath('/drafts');
+  revalidatePath('/pipeline');
+}
