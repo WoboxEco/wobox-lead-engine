@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import * as approveMessage from './approve-message.js';
 import * as checkWarmPath from './check-warm-path.js';
 import * as cleanupHubspotVenture from './cleanup-hubspot-venture.js';
+import * as enrichContacts from './enrich-contacts.js';
 import * as enrichLead from './enrich-lead.js';
 import * as generateMessages from './generate-messages.js';
 import * as healthCheck from './health-check.js';
@@ -167,8 +168,26 @@ program
   .option('--limit <n>', 'Max companies por corrida (default: 30)', (v) => Number.parseInt(v, 10))
   .option('--venture <venture>', 'Filtrar por venture')
   .option('--force', 'Rescan companies ya enriquecidas')
-  .option('--no-scrape', 'No intentar fetch del website para extraer IG link')
+  .option('--no-scrape', 'No scrapear el website (IG, telefono, WhatsApp, email generico)')
+  .option('--no-maps', 'No usar Google Maps (Apify) como fallback de telefono')
+  .option('--maps-limit <n>', 'Tope de busquedas Maps por corrida (default: 10)', (v) =>
+    Number.parseInt(v, 10),
+  )
   .action(enrichLead.run);
+program
+  .command('enrich-contacts')
+  .description(
+    'Canales de contacto: scrape website (gratis) + Google Maps si falta telefono (~1 cr Apify)',
+  )
+  .option('--id <uuid>', 'company_id target (omitir para batch)')
+  .option('--venture <venture>', 'Filtrar por venture')
+  .option('--limit <n>', 'Max companies (default: 30)', (v) => Number.parseInt(v, 10))
+  .option('--no-maps', 'Solo scrape del website, sin Google Maps')
+  .option('--maps-limit <n>', 'Tope de busquedas Maps por corrida (default: 10)', (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option('--force', 'Re-procesar companies con enriched_at ya seteado')
+  .action(enrichContacts.run);
 program
   .command('check-warm-path')
   .description(

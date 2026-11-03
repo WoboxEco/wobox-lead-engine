@@ -83,6 +83,10 @@ type CompanyRow = Record<string, unknown> & {
   neighborhood?: string;
   social_followers?: number;
   instagram_handle?: string;
+  phone?: string | null;
+  whatsapp?: string | null;
+  generic_email?: string | null;
+  linkedin_url?: string | null;
   contacts: Contact[];
   scores: Array<{
     total_score: number;
@@ -337,15 +341,30 @@ async function generateForCompany(args: {
   ctx.step = step;
   ctx.promptName = promptName;
 
+  const target = resolveChannelTarget(company, contact, channel);
+  vars.CHANNEL_TARGET = target ? target.value : 'sin dato';
+  if (!target) {
+    log.warn(
+      { company: company.name, channel },
+      'sin dato de contacto para el canal (enriquecer contactos en /pipeline)',
+    );
+  }
+
   log.info(
-    { model, approach, channel, step, promptName, company: company.name },
+    { model, approach, channel, step, promptName, company: company.name, target: target?.source },
     'generating message',
   );
 
   ctx.stage = 'prompt';
   const prompt = await loadPrompt('messages', promptName, vars);
   ctx.stage = 'claude';
-  const system = buildSystemPrompt(company.venture, approach, channel, step);
+  const system = buildSystemPrompt(
+    company.venture,
+    approach,
+    channel,
+    step,
+    target?.generic === true,
+  );
   const rawOutput = await claude.completeText({
     system,
     user: prompt,
@@ -390,6 +409,9 @@ export type Contact = Record<string, unknown> & {
   name: string;
   role?: string;
   email?: string | null;
+  phone?: string;
+  linkedin_url?: string;
+  instagram_url?: string;
   warm_path?: 'direct' | '2nd_degree' | 'none';
   warm_connector?: string;
   is_decision_maker?: boolean;
@@ -534,11 +556,67 @@ const CHANNEL_FORMAT_RULES: Partial<Record<Channel, string>> = {
     'Llamada: escribi un GUION en bullets (no un mensaje), con estas secciones: Apertura / Motivo / 2 preguntas / Cierre / Objecion "ya tenemos outlet" (con la respuesta sugerida).',
 };
 
+export interface ChannelTarget {
+  value: string;
+  /** De donde salio el dato: contact.* o company.* */
+  source: string;
+  /** true si va a un buzon/linea generica de la empresa, no a la persona. */
+  generic: boolean;
+}
+
+/**
+ * Destino disponible para el canal elegido. Prefiere el dato de la persona; si no hay,
+ * cae al dato de la company (email generico, telefono/WhatsApp del local, IG de la marca).
+ */
+export function resolveChannelTarget(
+  company: Pick<
+    CompanyRow,
+    'instagram_handle' | 'phone' | 'whatsapp' | 'generic_email' | 'linkedin_url'
+  >,
+  contact: Contact,
+  channel: Channel,
+): ChannelTarget | null {
+  const pick = (...opts: Array<[unknown, string, boolean]>): ChannelTarget | null => {
+    for (const [v, source, generic] of opts) {
+      if (typeof v === 'string' && v.trim()) return { value: v.trim(), source, generic };
+    }
+    return null;
+  };
+  switch (channel) {
+    case 'email':
+      return pick(
+        [contact.email, 'contact.email', false],
+        [company.generic_email, 'company.generic_email', true],
+      );
+    case 'whatsapp':
+      return pick(
+        [company.whatsapp, 'company.whatsapp', true],
+        [contact.phone, 'contact.phone', false],
+        [company.phone, 'company.phone', true],
+      );
+    case 'phone':
+      return pick([contact.phone, 'contact.phone', false], [company.phone, 'company.phone', true]);
+    case 'instagram_dm':
+      return pick(
+        [contact.instagram_url, 'contact.instagram_url', false],
+        [company.instagram_handle, 'company.instagram_handle', true],
+      );
+    case 'linkedin':
+      return pick(
+        [contact.linkedin_url, 'contact.linkedin_url', false],
+        [company.linkedin_url, 'company.linkedin_url', true],
+      );
+    default:
+      return null;
+  }
+}
+
 function buildSystemPrompt(
   venture: Venture,
   approach: ApproachType,
   channel: Channel,
   step: number,
+  genericTarget = false,
 ): string {
   const product = venture === 'loop' ? 'Loop' : 'Wobox';
   const channelRule =
@@ -564,7 +642,12 @@ function buildSystemPrompt(
             ? 'Estas construyendo familiaridad, no vendiendo. Aportas valor primero.'
             : 'Vas directo al punto con un pitch conciso y un call to action claro.',
     channelRule,
-  ].join(' ');
+    genericTarget
+      ? 'El mensaje llega a un canal general de la empresa (info@, WhatsApp o linea del local), no directo a la persona: abri saludando al equipo, menciona por nombre a quien buscas y pedi que se lo deriven.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function parseOutput(raw: string, channel: Channel): { subject: string | null; body: string } {

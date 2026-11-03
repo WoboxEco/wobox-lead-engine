@@ -1,5 +1,5 @@
 import { type Venture, createAdminClient } from '@wobox/core';
-import { scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
+import { contactChannels, scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
 import { type SearchLeadsResult, isProspectRegion } from '@wobox/skills/prospect-summary';
 import { revalidatePath } from 'next/cache';
 
@@ -24,6 +24,8 @@ export interface ProspectSourcingResponse {
   search: SearchLeadsResult | null;
   /** Companies a scorear en lotes desde el cliente. */
   toScore: string[];
+  /** Resultado del scrape de canales de contacto del website (null si no hubo companies). */
+  channels: { processed: number; updated: number; error?: string } | null;
 }
 
 export function validateVenture(raw: unknown): Venture | null {
@@ -89,7 +91,23 @@ export async function runProspectSourcing(input: {
     toScore = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
   }
 
-  return { venture, search, toScore };
+  // Canales de contacto: solo scrape del website (gratis, ~5s en paralelo) de lo recién
+  // traído. El fallback Google Maps (lento, Apify) lo dispara el cliente vía /api/enrich.
+  let channels: ProspectSourcingResponse['channels'] = null;
+  if (toScore.length > 0) {
+    try {
+      const res = await contactChannels.enrichContactChannels(createAdminClient(), {
+        venture,
+        ids: toScore,
+        maps: false,
+      });
+      channels = { processed: res.processed, updated: res.updated };
+    } catch (e) {
+      channels = { processed: 0, updated: 0, error: String(e).slice(0, 80) };
+    }
+  }
+
+  return { venture, search, toScore, channels };
 }
 
 export async function runProspectScoring(input: {
