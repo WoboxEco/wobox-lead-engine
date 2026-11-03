@@ -12,3 +12,5 @@ export * as syncHubspot from './sync-hubspot.js';
 export * as showPipeline from './show-pipeline.js';
 export * as showMetrics from './show-metrics.js';
 export * as deliver from './deliver.js';
+export * as revealEmail from './reveal-email.js';
+export { MAX_REVEALS_PER_RUN, revealContactEmail } from './reveal-email.js';

@@ -30,6 +30,16 @@ export interface GenerateMessagesOptions {
   channel?: Channel;
   step?: string;
   model?: string;
+  /** Con channel=email: saltea (no genera draft) a los contactos sin email. */
+  requireEmail?: boolean;
+}
+
+export interface GenerateMessagesResult {
+  ok: number;
+  skipped: number;
+  failed: number;
+  /** Subconjunto de skipped: contacto sin email con requireEmail + channel=email */
+  noEmail: number;
 }
 
 const COMPANY_SELECT =
@@ -56,13 +66,14 @@ type CompanyRow = Record<string, unknown> & {
   }>;
 };
 
-export async function run(opts: GenerateMessagesOptions): Promise<void> {
+export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessagesResult> {
   const log = createLogger('generate-messages');
   const db = createAdminClient();
 
   const model = opts.model ?? DEFAULT_MODEL;
   const channel: Channel = opts.channel ?? 'linkedin';
   const step = Number.parseInt(opts.step ?? '1', 10);
+  const requireEmail = opts.requireEmail === true && channel === 'email';
 
   if (!opts.id && !opts.all) {
     throw new Error(
@@ -74,6 +85,10 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
   if (opts.id) {
     const company = await fetchCompany(db, opts.id);
     if (!company) throw new Error(`Company ${opts.id} not found`);
+    if (requireEmail && !hasEmail(selectContact(company.contacts, opts.contactId))) {
+      console.log(`  [skip] ${company.name}: contacto sin email`);
+      return { ok: 0, skipped: 1, failed: 0, noEmail: 1 };
+    }
     try {
       await generateForCompany({ db, log, company, model, channel, step, opts });
     } catch (err) {
@@ -86,7 +101,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
       throw err;
     }
     console.log(`Draft generado para ${company.name}`);
-    return;
+    return { ok: 1, skipped: 0, failed: 0, noEmail: 0 };
   }
 
   // Modo batch
@@ -102,7 +117,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
     console.log(
       `No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`,
     );
-    return;
+    return { ok: 0, skipped: 0, failed: 0, noEmail: 0 };
   }
 
   // Pre-cargar drafts existentes del canal para no duplicar (salvo --force).
@@ -127,6 +142,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
   let ok = 0;
   let skipped = 0;
   let failed = 0;
+  let noEmail = 0;
 
   for (const company of companies) {
     if (!company.contacts || company.contacts.length === 0) {
@@ -137,6 +153,12 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
     if (haveDraft.has(company.id)) {
       skipped++;
       console.log(`  [skip] ${company.name}: ya tiene draft ${channel} (--force para regenerar)`);
+      continue;
+    }
+    if (requireEmail && !hasEmail(selectContact(company.contacts, opts.contactId))) {
+      skipped++;
+      noEmail++;
+      console.log(`  [skip] ${company.name}: contacto sin email`);
       continue;
     }
     try {
@@ -155,7 +177,14 @@ export async function run(opts: GenerateMessagesOptions): Promise<void> {
     }
   }
 
-  console.log(`\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}`);
+  console.log(
+    `\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}${requireEmail ? ` sin_email=${noEmail}` : ''}`,
+  );
+  return { ok, skipped, failed, noEmail };
+}
+
+function hasEmail(contact: Contact | null): boolean {
+  return typeof contact?.email === 'string' && contact.email.trim().length > 0;
 }
 
 async function fetchCompany(db: DbClient, id: string): Promise<CompanyRow | null> {

@@ -192,7 +192,10 @@ program
   .option('--channel <channel>', 'linkedin | email | whatsapp | instagram_dm (default: linkedin)')
   .option('--step <n>', 'Step 1-4 (solo nurture, default: 1)')
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: sonnet)')
-  .action(generateMessages.run);
+  .option('--require-email', 'Con --channel=email: saltear contactos sin email')
+  .action(async (opts: generateMessages.GenerateMessagesOptions) => {
+    await generateMessages.run(opts);
+  });
 program
   .command('nurture-sequence')
   .description('Genera drafts step 2-4 para companies nurturing segun calendario (2/5/10 dias)')

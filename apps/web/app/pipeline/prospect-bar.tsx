@@ -64,6 +64,12 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
     fd.set('venture', msgVenture);
     fd.set('channel', channel);
     startTransition(async () => {
+      if (channel === 'email') {
+        const r = await revealEmails(msgVenture);
+        fd.set('revealed', String(r.revealed));
+        fd.set('credits', String(r.credits));
+        if (r.error) fd.set('revealError', r.error);
+      }
       const text = await generateMessagesAction(fd);
       setResult({ which: 'messages', text });
       setRunning(null);
@@ -160,8 +166,8 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <h2 className="text-[14px] font-semibold">Generar mensajes</h2>
           </div>
           <p className={`${labelClass} mt-1`}>
-            Redacta drafts para los leads <em>qualified</em>, adaptados al canal. Gasta tokens
-            Claude. No envía: vos copiás y mandás.
+            Redacta drafts para los leads <em>qualified</em>. Email: revela el contacto en Apollo (1
+            crédito c/u, máx 10) y se envía desde /drafts. Otros canales: copiás y mandás.
           </p>
         </div>
 
@@ -220,4 +226,29 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
       </div>
     </div>
   );
+}
+
+/** Auto-reveal de emails vía API route (fuera de la server action por el timeout de Vercel). */
+async function revealEmails(
+  venture: string,
+): Promise<{ revealed: number; credits: number; error?: string }> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55_000);
+    const res = await fetch('/api/reveal-emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ venture }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const data = (await res.json()) as { revealed?: number; credits?: number; error?: string };
+    if (!res.ok || data.error) {
+      return { revealed: 0, credits: 0, error: data.error ?? `HTTP ${res.status}` };
+    }
+    return { revealed: data.revealed ?? 0, credits: data.credits ?? 0 };
+  } catch (err) {
+    const msg = err instanceof Error && err.name === 'AbortError' ? 'timeout Apollo' : String(err);
+    return { revealed: 0, credits: 0, error: msg };
+  }
 }
