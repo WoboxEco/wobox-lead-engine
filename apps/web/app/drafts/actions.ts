@@ -153,6 +153,26 @@ export async function sendDraft(formData: FormData): Promise<void> {
   revalidatePath('/');
 }
 
+/** Edita el asunto de un draft de email sin cambiar su status. */
+export async function updateSubject(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') ?? '');
+  const subject = String(formData.get('subject') ?? '').trim();
+  if (!id) throw new Error('missing id');
+  if (!subject) throw new Error('asunto vacío');
+
+  const msg = await loadMessage(id);
+  assertStatus(msg, ['draft', 'approved']);
+  if (msg.channel !== 'email') throw new Error('solo los emails tienen asunto');
+
+  const db = createAdminClient();
+  const { error } = await db
+    .from('messages')
+    .update({ subject: subject.slice(0, 200) })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+  revalidatePath('/drafts');
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /** Carga/corrige a mano el email del contacto de un draft de email. */

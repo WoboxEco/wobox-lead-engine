@@ -42,6 +42,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
   const [subsector, setSubsector] = useState('todos');
   const [msgVenture, setMsgVenture] = useState(initialVenture);
   const [channel, setChannel] = useState('email');
+  const [regenerate, setRegenerate] = useState(false);
 
   function runProspect() {
     setResult(null);
@@ -63,6 +64,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
     const fd = new FormData();
     fd.set('venture', msgVenture);
     fd.set('channel', channel);
+    if (regenerate) fd.set('regenerate', 'true');
     startTransition(async () => {
       if (channel === 'email') {
         const r = await revealEmails(msgVenture);
@@ -216,6 +218,17 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             Generar mensajes
           </button>
         </div>
+
+        <label className="text-[12.5px] text-muted-strong flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={regenerate}
+            onChange={(e) => setRegenerate(e.target.checked)}
+            disabled={isPending}
+            className="accent-[var(--accent)]"
+          />
+          Regenerar (descarta los borradores pendientes de este negocio y canal)
+        </label>
 
         {running === 'messages' ? (
           <p className="text-[12.5px] text-muted">Procesando… 1-2 min. No cierres la pestaña.</p>
