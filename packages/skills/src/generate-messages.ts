@@ -23,7 +23,8 @@ export interface GenerateMessagesOptions {
   stage?: string;
   /** Max companies en modo batch (default: 50) */
   limit?: string;
-  /** Regenerar aunque ya exista un draft para el canal */
+  /** Regenerar aunque ya exista un draft para el canal. Al generar el nuevo,
+   *  descarta (status=discarded) los drafts pendientes previos de esa company + canal. */
   force?: boolean;
   contactId?: string;
   approach?: ApproachType;
@@ -90,7 +91,9 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
       return { ok: 0, skipped: 1, failed: 0, noEmail: 1 };
     }
     try {
-      await generateForCompany({ db, log, company, model, channel, step, opts });
+      const previous = opts.force ? await pendingDraftIds(db, company.id, channel) : [];
+      const newId = await generateForCompany({ db, log, company, model, channel, step, opts });
+      await discardDrafts(db, previous, newId);
     } catch (err) {
       await writeErrorLog(db, {
         skill: 'generate-messages',
@@ -162,9 +165,14 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
       continue;
     }
     try {
-      await generateForCompany({ db, log, company, model, channel, step, opts });
+      const previous = opts.force ? await pendingDraftIds(db, company.id, channel) : [];
+      const newId = await generateForCompany({ db, log, company, model, channel, step, opts });
+      // Recién con el draft nuevo guardado descartamos los anteriores (si falla, no se pierde nada).
+      const discarded = await discardDrafts(db, previous, newId);
       ok++;
-      console.log(`  [ok]   ${company.name}`);
+      if (discarded > 0)
+        console.log(`  [ok]   ${company.name} (descartados ${discarded} drafts previos)`);
+      else console.log(`  [ok]   ${company.name}`);
     } catch (err) {
       failed++;
       console.log(`  [FAIL] ${company.name}: ${err instanceof Error ? err.message : String(err)}`);
@@ -181,6 +189,35 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
     `\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}${requireEmail ? ` sin_email=${noEmail}` : ''}`,
   );
   return { ok, skipped, failed, noEmail };
+}
+
+/** IDs de drafts pendientes (status=draft) de una company para un canal. */
+async function pendingDraftIds(
+  db: DbClient,
+  companyId: string,
+  channel: Channel,
+): Promise<string[]> {
+  const { data, error } = await db
+    .from('messages')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('channel', channel)
+    .eq('status', 'draft');
+  if (error) throw new Error(`fetch drafts previos: ${error.message}`);
+  return ((data as Array<{ id: string }> | null) ?? []).map((m) => m.id);
+}
+
+/** Descarta los drafts indicados (salvo el recién creado). Devuelve cuántos descartó. */
+async function discardDrafts(db: DbClient, ids: string[], keepId: string): Promise<number> {
+  const toDiscard = ids.filter((id) => id !== keepId);
+  if (toDiscard.length === 0) return 0;
+  const { error } = await db
+    .from('messages')
+    .update({ status: 'discarded' })
+    .in('id', toDiscard)
+    .eq('status', 'draft');
+  if (error) throw new Error(`descartar drafts previos: ${error.message}`);
+  return toDiscard.length;
 }
 
 function hasEmail(contact: Contact | null): boolean {
@@ -201,8 +238,8 @@ async function generateForCompany(args: {
   channel: Channel;
   step: number;
   opts: GenerateMessagesOptions;
-}): Promise<void> {
-  const { db, log, company, model, channel, step, opts } = args;
+}): Promise<string> {
+  const { db, log, company, model, channel, opts } = args;
 
   const contact = selectContact(company.contacts, opts.contactId);
   if (!contact) {
@@ -215,8 +252,17 @@ async function generateForCompany(args: {
     .slice()
     .sort((a, b) => b.scored_at.localeCompare(a.scored_at))[0];
 
-  const approach = opts.approach ?? selectApproach(contact, latestScore?.total_score);
-  const promptName = selectPromptName(company.venture, company.vertical, approach);
+  const { approach, step } = resolveApproachAndStep({
+    contact,
+    totalScore: latestScore?.total_score,
+    channel,
+    step: args.step,
+    ...(opts.approach ? { approach: opts.approach } : {}),
+  });
+  const promptName =
+    channel === 'email' && approach === 'nurture' && step > EMAIL_NURTURE_FIRST_STEP
+      ? 'message-email-followup-v1'
+      : selectPromptName(company.venture, company.vertical, approach);
   const vars = buildVars({
     company,
     contact,
@@ -225,10 +271,13 @@ async function generateForCompany(args: {
     ...(latestScore ? { score: latestScore } : {}),
   });
 
-  log.info({ model, approach, channel, promptName, company: company.name }, 'generating message');
+  log.info(
+    { model, approach, channel, step, promptName, company: company.name },
+    'generating message',
+  );
 
   const prompt = await loadPrompt('messages', promptName, vars);
-  const system = buildSystemPrompt(company.venture, approach, channel);
+  const system = buildSystemPrompt(company.venture, approach, channel, step);
   const rawOutput = await claude.completeText({
     system,
     user: prompt,
@@ -240,22 +289,29 @@ async function generateForCompany(args: {
 
   const { subject, body } = parseOutput(rawOutput, channel);
 
-  const { error: insertErr } = await db.from('messages').insert({
-    contact_id: contact.id,
-    company_id: company.id,
-    sequence_step: approach === 'nurture' ? step : null,
-    approach_type: approach,
-    channel,
-    subject,
-    body,
-    original_body: body,
-    prompt_version: promptName,
-    status: 'draft',
-    created_at: new Date().toISOString(),
-  });
-  if (insertErr) throw new Error(`insert message: ${insertErr.message}`);
+  const { data: inserted, error: insertErr } = await db
+    .from('messages')
+    .insert({
+      contact_id: contact.id,
+      company_id: company.id,
+      sequence_step: approach === 'nurture' ? step : null,
+      approach_type: approach,
+      channel,
+      subject,
+      body,
+      original_body: body,
+      prompt_version: promptName,
+      status: 'draft',
+      created_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+  if (insertErr || !inserted) {
+    throw new Error(`insert message: ${insertErr?.message ?? 'sin id'}`);
+  }
 
-  log.info({ promptName, approach, channel, company: company.name }, 'draft message saved');
+  log.info({ promptName, approach, channel, step, company: company.name }, 'draft message saved');
+  return (inserted as { id: string }).id;
 }
 
 export type Contact = Record<string, unknown> & {
@@ -274,8 +330,39 @@ function selectContact(contacts: Contact[], preferId?: string): Contact | null {
   return contacts.find((c) => c.is_decision_maker) ?? contacts[0] ?? null;
 }
 
+/**
+ * Por email el nurture arranca en el step 4 (propuesta): los steps 1-3 son
+ * comentarios de valor pensados para posts de LinkedIn / Instagram y no tienen
+ * sentido como email en frío. Los steps > 4 por email son follow-ups cortos.
+ */
+export const EMAIL_NURTURE_FIRST_STEP = 4;
+/** Último step de la secuencia por email (4 = propuesta, 5-6 = follow-ups). */
+export const EMAIL_NURTURE_LAST_STEP = 6;
+
+export function resolveApproachAndStep(args: {
+  contact: Contact;
+  totalScore: number | undefined;
+  channel: Channel;
+  step: number;
+  approach?: ApproachType;
+}): { approach: ApproachType; step: number } {
+  const { contact, totalScore, channel } = args;
+  const step = Number.isFinite(args.step) && args.step > 0 ? args.step : 1;
+  if (channel !== 'email') {
+    return { approach: args.approach ?? selectApproach(contact, totalScore), step };
+  }
+  // Email: primer contacto = warm_intro si hay warm path, si no direct. Nunca nurture 1-3.
+  const approach: ApproachType = args.approach ?? (hasWarmPath(contact) ? 'warm_intro' : 'direct');
+  if (approach !== 'nurture') return { approach, step };
+  return { approach, step: Math.max(step, EMAIL_NURTURE_FIRST_STEP) };
+}
+
+function hasWarmPath(contact: Contact): boolean {
+  return contact.warm_path === 'direct' || contact.warm_path === '2nd_degree';
+}
+
 export function selectApproach(contact: Contact, totalScore: number | undefined): ApproachType {
-  if (contact.warm_path === 'direct' || contact.warm_path === '2nd_degree') return 'warm_intro';
+  if (hasWarmPath(contact)) return 'warm_intro';
   if ((totalScore ?? 0) >= 80) return 'direct';
   return 'nurture';
 }
@@ -334,6 +421,7 @@ function buildVars(args: {
 
   return {
     COMPANY_NAME: company.name,
+    PRODUCT: PRODUCT_LABELS[company.venture] ?? 'Wobox',
     CONTACT_NAME: contact.name,
     CONTACT_ROLE: contact.role ?? 'decision maker',
     VERTICAL: company.vertical ?? company.subsector ?? 'retail',
@@ -353,6 +441,12 @@ function buildVars(args: {
   };
 }
 
+const PRODUCT_LABELS: Record<Venture, string> = {
+  loop: 'Loop',
+  wobox_food: 'Wobox Food',
+  wobox_fashion: 'Wobox Fashion',
+};
+
 /** Fecha de hoy (YYYY-MM-DD) en hora de Buenos Aires, para urgencias con deadline. */
 function todayInBuenosAires(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -371,7 +465,12 @@ const CHANNEL_FORMAT_RULES: Partial<Record<Channel, string>> = {
     'Llamada: escribi un GUION en bullets (no un mensaje), con estas secciones: Apertura / Motivo / 2 preguntas / Cierre / Objecion "ya tenemos outlet" (con la respuesta sugerida).',
 };
 
-function buildSystemPrompt(venture: Venture, approach: ApproachType, channel: Channel): string {
+function buildSystemPrompt(
+  venture: Venture,
+  approach: ApproachType,
+  channel: Channel,
+  step: number,
+): string {
   const product = venture === 'loop' ? 'Loop' : 'Wobox';
   const channelRule =
     channel === 'email'
@@ -388,9 +487,13 @@ function buildSystemPrompt(venture: Venture, approach: ApproachType, channel: Ch
     'Evitas "solucion integral", "propuesta de valor", "sinergia", y similares.',
     approach === 'warm_intro'
       ? 'Estas pidiendo una presentacion a un contacto en comun. Sos breve y humano.'
-      : approach === 'nurture'
-        ? 'Estas construyendo familiaridad, no vendiendo. Aportas valor primero.'
-        : 'Vas directo al punto con un pitch conciso y un call to action claro.',
+      : approach === 'nurture' && channel === 'email' && step > EMAIL_NURTURE_FIRST_STEP
+        ? 'Es un follow-up corto de un email anterior que no tuvo respuesta. Breve, humano, sin presionar.'
+        : approach === 'nurture' && channel === 'email'
+          ? 'Es un email de propuesta: mencionas el producto con un call to action claro.'
+          : approach === 'nurture'
+            ? 'Estas construyendo familiaridad, no vendiendo. Aportas valor primero.'
+            : 'Vas directo al punto con un pitch conciso y un call to action claro.',
     channelRule,
   ].join(' ');
 }

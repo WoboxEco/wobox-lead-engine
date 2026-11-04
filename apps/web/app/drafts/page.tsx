@@ -6,7 +6,9 @@ import {
   saveEditAndApprove,
   sendDraft,
   updateContactEmail,
+  updateSubject,
 } from './actions';
+import { CopyButton } from './copy-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +17,25 @@ const VENTURE_LABELS: Record<string, string> = {
   wobox_food: 'Wobox Food',
   wobox_fashion: 'Wobox Fashion',
 };
+
+const CHANNEL_LABELS: Record<string, string> = {
+  email: 'Email',
+  linkedin: 'LinkedIn',
+  whatsapp: 'WhatsApp',
+  instagram_dm: 'Instagram',
+  phone: 'Llamada',
+};
+
+const APPROACH_LABELS: Record<string, string> = {
+  direct: 'Directo',
+  warm_intro: 'Warm intro',
+  nurture: 'Nurture',
+};
+
+function approachLabel(approach: string, step: number | null): string {
+  const label = APPROACH_LABELS[approach] ?? approach;
+  return approach === 'nurture' && step ? `${label} · step ${step}` : label;
+}
 
 interface PageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -130,11 +151,10 @@ function DraftCard({ row }: { row: DraftRow }) {
           <span className={`pill ${row.status === 'approved' ? 'stage-qualified' : 'stage-new'}`}>
             {row.status}
           </span>
-          <span className="pill stage-enriched">{row.approach_type}</span>
-          <span className="pill stage-nurturing">{row.channel}</span>
-          {row.sequence_step ? (
-            <span className="text-[11px] text-muted mono">step {row.sequence_step}</span>
-          ) : null}
+          <span className="pill stage-nurturing">{CHANNEL_LABELS[row.channel] ?? row.channel}</span>
+          <span className="pill stage-enriched">
+            {approachLabel(row.approach_type, row.sequence_step)}
+          </span>
           {edited ? (
             <span className="text-[11px] text-[oklch(0.78_0.16_75)] mono">editado</span>
           ) : null}
@@ -169,11 +189,27 @@ function DraftCard({ row }: { row: DraftRow }) {
         </form>
       ) : null}
 
-      {row.subject ? (
-        <div className="mt-4 text-[13px] font-medium text-muted-strong">
-          <span className="text-muted text-[11px] uppercase tracking-[0.08em] mr-2">Subject</span>
-          {row.subject}
-        </div>
+      {isEmail ? (
+        <form action={updateSubject} className="mt-2 flex items-center gap-2 flex-wrap text-[13px]">
+          <input type="hidden" name="id" value={row.id} />
+          <label
+            htmlFor={`subject-${row.id}`}
+            className="text-muted text-[11px] uppercase tracking-[0.08em]"
+          >
+            Asunto:
+          </label>
+          <input
+            id={`subject-${row.id}`}
+            name="subject"
+            required
+            defaultValue={row.subject ?? ''}
+            placeholder="Asunto del email"
+            className={`${inputCls} w-auto min-w-[260px] flex-1 max-w-xl py-1`}
+          />
+          <button type="submit" className={btnSecondary}>
+            <Pencil size={14} /> Guardar asunto
+          </button>
+        </form>
       ) : null}
 
       <div className="mt-3 text-[13.5px] leading-relaxed text-muted-strong whitespace-pre-wrap max-w-3xl">
@@ -190,18 +226,33 @@ function DraftCard({ row }: { row: DraftRow }) {
           </form>
         ) : null}
 
-        <form action={sendDraft}>
-          <input type="hidden" name="id" value={row.id} />
-          <button
-            type="submit"
-            disabled={missingEmail}
-            title={missingEmail ? 'Cargá el email en "Para:" para poder enviar' : undefined}
-            className={`${btnSecondary} disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            <Send size={14} />{' '}
-            {missingEmail ? 'Falta email' : isEmail ? 'Enviar' : 'Marcar enviado'}
-          </button>
-        </form>
+        {isEmail ? (
+          <form action={sendDraft}>
+            <input type="hidden" name="id" value={row.id} />
+            <button
+              type="submit"
+              disabled={missingEmail}
+              title={missingEmail ? 'Cargá el email en "Para:" para poder enviar' : undefined}
+              className={`${btnSecondary} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              <Send size={14} /> {missingEmail ? 'Falta email' : 'Enviar'}
+            </button>
+          </form>
+        ) : (
+          <>
+            <CopyButton text={row.body} className={btnSecondary} />
+            <form action={sendDraft}>
+              <input type="hidden" name="id" value={row.id} />
+              <button
+                type="submit"
+                title="Mandalo a mano por el canal y después marcalo como enviado"
+                className={btnSecondary}
+              >
+                <Send size={14} /> Marcar enviado
+              </button>
+            </form>
+          </>
+        )}
 
         <form action={discardDraft}>
           <input type="hidden" name="id" value={row.id} />
@@ -216,11 +267,11 @@ function DraftCard({ row }: { row: DraftRow }) {
           </summary>
           <form action={saveEditAndApprove} className="mt-3 space-y-2">
             <input type="hidden" name="id" value={row.id} />
-            {row.channel === 'email' ? (
+            {isEmail ? (
               <input
                 name="subject"
                 defaultValue={row.subject ?? ''}
-                placeholder="Subject"
+                placeholder="Asunto"
                 className={inputCls}
               />
             ) : null}

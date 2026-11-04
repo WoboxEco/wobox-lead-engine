@@ -1,4 +1,4 @@
-import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
+import { type Channel, type DbClient, createAdminClient, createLogger } from '@wobox/core';
 
 import * as generateMessages from './generate-messages.js';
 
@@ -9,6 +9,9 @@ const NEXT_STEP_DELAY_DAYS: Record<number, number> = {
   2: 2, // 2 dias despues de step 1
   3: 3, // 3 dias despues de step 2
   4: 5, // 5 dias despues de step 3
+  // Solo email: el nurture por email arranca en el step 4 (propuesta) y sigue con follow-ups.
+  5: 3, // 3 dias despues de la propuesta
+  6: 5, // 5 dias despues del primer follow-up (ultimo toque)
 };
 
 export interface NurtureSequenceOptions {
@@ -20,6 +23,7 @@ export interface NurtureSequenceOptions {
 
 type LastMessage = {
   sequence_step: number | null;
+  channel: Channel | null;
   sent_at: string | null;
   status: string;
 };
@@ -66,8 +70,12 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
       continue;
     }
 
-    const lastStep = last.sequence_step ?? 1;
-    if (lastStep >= 4) {
+    const channel: Channel = last.channel ?? 'linkedin';
+    const isEmail = channel === 'email';
+    const lastStep =
+      last.sequence_step ?? (isEmail ? generateMessages.EMAIL_NURTURE_FIRST_STEP : 1);
+    const lastStepOfSequence = isEmail ? generateMessages.EMAIL_NURTURE_LAST_STEP : 4;
+    if (lastStep >= lastStepOfSequence) {
       console.log(`[${c.name}] secuencia completa (step ${lastStep})`);
       done++;
       continue;
@@ -113,6 +121,7 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
       await generateMessages.run({
         id: c.id,
         approach: 'nurture',
+        channel,
         step: String(nextStep),
         ...(opts.model ? { model: opts.model } : {}),
       });
@@ -123,7 +132,9 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
     }
   }
 
-  console.log(`\nResumen: generated=${generated}, waiting=${waiting}, done=${done}, skipped=${skipped}`);
+  console.log(
+    `\nResumen: generated=${generated}, waiting=${waiting}, done=${done}, skipped=${skipped}`,
+  );
 }
 
 async function loadLastNurtureMessage(
@@ -132,7 +143,7 @@ async function loadLastNurtureMessage(
 ): Promise<LastMessage | null> {
   const { data, error } = await db
     .from('messages')
-    .select('sequence_step, sent_at, status')
+    .select('sequence_step, channel, sent_at, status')
     .eq('company_id', companyId)
     .eq('approach_type', 'nurture')
     .in('status', ['approved', 'sent'])

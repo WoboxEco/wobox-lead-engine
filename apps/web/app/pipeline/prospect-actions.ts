@@ -20,6 +20,9 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   const channel = String(formData.get('channel') ?? 'email') as Channel;
   if (!VENTURES.has(venture)) return 'Venture inválido';
   if (!CHANNELS.has(channel)) return 'Canal inválido';
+  // Regenerar: el skill descarta los drafts pendientes (status=draft) de cada company del
+  // venture + canal recién cuando el draft nuevo quedó guardado.
+  const regenerate = formData.get('regenerate') === 'true';
 
   // El auto-reveal de emails (Apollo, máx MAX_REVEALS_PER_RUN) corre antes en
   // /api/reveal-emails para no sumar latencia a esta server action (timeout Vercel Hobby).
@@ -35,6 +38,7 @@ export async function generateMessagesAction(formData: FormData): Promise<string
       all: true,
       venture,
       channel,
+      ...(regenerate ? { force: true } : {}),
       ...(isEmail ? { requireEmail: true } : {}),
     });
   } catch (e) {
