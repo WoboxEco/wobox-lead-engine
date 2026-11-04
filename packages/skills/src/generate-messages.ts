@@ -9,6 +9,7 @@ import {
 } from '@wobox/core';
 import { claude } from '@wobox/integrations';
 import { loadPrompt } from '@wobox/prompts';
+import { hasEmail, selectContact } from './contact-selection.js';
 
 // Default: Sonnet. La generacion de mensajes depende de voz argentina + creatividad
 // + adaptacion por BP/canal. Override con --model=haiku solo para pruebas de volumen.
@@ -39,8 +40,10 @@ export interface GenerateMessagesResult {
   ok: number;
   skipped: number;
   failed: number;
-  /** Subconjunto de skipped: contacto sin email con requireEmail + channel=email */
+  /** Subconjunto de skipped: ningún contacto de la company tiene email (requireEmail + channel=email) */
   noEmail: number;
+  /** Subconjunto de skipped: company sin contactos */
+  noContacts: number;
 }
 
 const COMPANY_SELECT =
@@ -86,9 +89,9 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
   if (opts.id) {
     const company = await fetchCompany(db, opts.id);
     if (!company) throw new Error(`Company ${opts.id} not found`);
-    if (requireEmail && !hasEmail(selectContact(company.contacts, opts.contactId))) {
-      console.log(`  [skip] ${company.name}: contacto sin email`);
-      return { ok: 0, skipped: 1, failed: 0, noEmail: 1 };
+    if (requireEmail && !hasEmail(pickContact(company, channel, opts.contactId))) {
+      console.log(`  [skip] ${company.name}: ningún contacto con email`);
+      return { ok: 0, skipped: 1, failed: 0, noEmail: 1, noContacts: 0 };
     }
     try {
       const previous = opts.force ? await pendingDraftIds(db, company.id, channel) : [];
@@ -104,7 +107,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
       throw err;
     }
     console.log(`Draft generado para ${company.name}`);
-    return { ok: 1, skipped: 0, failed: 0, noEmail: 0 };
+    return { ok: 1, skipped: 0, failed: 0, noEmail: 0, noContacts: 0 };
   }
 
   // Modo batch
@@ -120,7 +123,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
     console.log(
       `No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`,
     );
-    return { ok: 0, skipped: 0, failed: 0, noEmail: 0 };
+    return { ok: 0, skipped: 0, failed: 0, noEmail: 0, noContacts: 0 };
   }
 
   // Pre-cargar drafts existentes del canal para no duplicar (salvo --force).
@@ -146,10 +149,12 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
   let skipped = 0;
   let failed = 0;
   let noEmail = 0;
+  let noContacts = 0;
 
   for (const company of companies) {
     if (!company.contacts || company.contacts.length === 0) {
       skipped++;
+      noContacts++;
       console.log(`  [skip] ${company.name}: sin contacts`);
       continue;
     }
@@ -158,10 +163,10 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
       console.log(`  [skip] ${company.name}: ya tiene draft ${channel} (--force para regenerar)`);
       continue;
     }
-    if (requireEmail && !hasEmail(selectContact(company.contacts, opts.contactId))) {
+    if (requireEmail && !hasEmail(pickContact(company, channel, opts.contactId))) {
       skipped++;
       noEmail++;
-      console.log(`  [skip] ${company.name}: contacto sin email`);
+      console.log(`  [skip] ${company.name}: ningún contacto con email`);
       continue;
     }
     try {
@@ -188,7 +193,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
   console.log(
     `\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}${requireEmail ? ` sin_email=${noEmail}` : ''}`,
   );
-  return { ok, skipped, failed, noEmail };
+  return { ok, skipped, failed, noEmail, noContacts };
 }
 
 /** IDs de drafts pendientes (status=draft) de una company para un canal. */
@@ -220,10 +225,6 @@ async function discardDrafts(db: DbClient, ids: string[], keepId: string): Promi
   return toDiscard.length;
 }
 
-function hasEmail(contact: Contact | null): boolean {
-  return typeof contact?.email === 'string' && contact.email.trim().length > 0;
-}
-
 async function fetchCompany(db: DbClient, id: string): Promise<CompanyRow | null> {
   const { data, error } = await db.from('companies').select(COMPANY_SELECT).eq('id', id).single();
   if (error || !data) return null;
@@ -241,7 +242,9 @@ async function generateForCompany(args: {
 }): Promise<string> {
   const { db, log, company, model, channel, opts } = args;
 
-  const contact = selectContact(company.contacts, opts.contactId);
+  // Email: el contacto con email (DM con email > cualquiera con email) para que el draft
+  // quede con un contact_id que /drafts pueda mostrar en "Para:" y enviar.
+  const contact = pickContact(company, channel, opts.contactId);
   if (!contact) {
     throw new Error(
       `${company.name} no tiene contacts (insertar uno, idealmente con is_decision_maker=true)`,
@@ -318,16 +321,14 @@ export type Contact = Record<string, unknown> & {
   id: string;
   name: string;
   role?: string;
-  email?: string;
+  email?: string | null;
   warm_path?: 'direct' | '2nd_degree' | 'none';
   warm_connector?: string;
   is_decision_maker?: boolean;
 };
 
-function selectContact(contacts: Contact[], preferId?: string): Contact | null {
-  if (!contacts || contacts.length === 0) return null;
-  if (preferId) return contacts.find((c) => c.id === preferId) ?? null;
-  return contacts.find((c) => c.is_decision_maker) ?? contacts[0] ?? null;
+function pickContact(company: CompanyRow, channel: Channel, preferId?: string): Contact | null {
+  return selectContact(company.contacts, { channel, preferId });
 }
 
 /**

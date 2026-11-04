@@ -67,9 +67,10 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
     if (regenerate) fd.set('regenerate', 'true');
     startTransition(async () => {
       if (channel === 'email') {
-        const r = await revealEmails(msgVenture);
+        const r = await revealEmails(msgVenture, regenerate);
         fd.set('revealed', String(r.revealed));
         fd.set('credits', String(r.credits));
+        if (r.failures.length > 0) fd.set('revealFailures', JSON.stringify(r.failures));
         if (r.error) fd.set('revealError', r.error);
       }
       const text = await generateMessagesAction(fd);
@@ -242,26 +243,38 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
 }
 
 /** Auto-reveal de emails vía API route (fuera de la server action por el timeout de Vercel). */
+type RevealFailure = { company: string; contact: string | null; reason: string };
+
 async function revealEmails(
   venture: string,
-): Promise<{ revealed: number; credits: number; error?: string }> {
+  force: boolean,
+): Promise<{ revealed: number; credits: number; failures: RevealFailure[]; error?: string }> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 55_000);
     const res = await fetch('/api/reveal-emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ venture }),
+      body: JSON.stringify({ venture, force }),
       signal: controller.signal,
     });
     clearTimeout(timer);
-    const data = (await res.json()) as { revealed?: number; credits?: number; error?: string };
+    const data = (await res.json()) as {
+      revealed?: number;
+      credits?: number;
+      failures?: RevealFailure[];
+      error?: string;
+    };
     if (!res.ok || data.error) {
-      return { revealed: 0, credits: 0, error: data.error ?? `HTTP ${res.status}` };
+      return { revealed: 0, credits: 0, failures: [], error: data.error ?? `HTTP ${res.status}` };
     }
-    return { revealed: data.revealed ?? 0, credits: data.credits ?? 0 };
+    return {
+      revealed: data.revealed ?? 0,
+      credits: data.credits ?? 0,
+      failures: Array.isArray(data.failures) ? data.failures : [],
+    };
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError' ? 'timeout Apollo' : String(err);
-    return { revealed: 0, credits: 0, error: msg };
+    return { revealed: 0, credits: 0, failures: [], error: msg };
   }
 }
