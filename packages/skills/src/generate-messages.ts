@@ -288,8 +288,13 @@ function selectPromptName(
   if (venture === 'loop') {
     return `message-loop-${approach.replace('_', '-')}-v1`;
   }
-  // Wobox: warm_intro es compartido; nurture y direct se bifurcan por vertical.
-  if (approach === 'warm_intro') return 'message-wobox-warm-intro-v1';
+  // Wobox: food usa el warm_intro compartido; fashion tiene el suyo (propuesta
+  // de Flash Sales / Outlet Digital). Nurture y direct se bifurcan por vertical.
+  if (approach === 'warm_intro') {
+    return venture === 'wobox_fashion'
+      ? 'message-wobox-warm-intro-fashion-v1'
+      : 'message-wobox-warm-intro-v1';
+  }
   const verticalSlug = venture === 'wobox_food' ? 'food' : 'fashion';
   return `message-wobox-${approach}-${verticalSlug}-v1`;
 }
@@ -344,7 +349,18 @@ function buildVars(args: {
     AI_REASONING: score?.ai_reasoning ?? 'n/a',
     CONNECTOR_NAME: contact.warm_connector ?? 'n/a',
     WARM_CONNECTOR: contact.warm_connector ?? 'n/a',
+    TODAY: todayInBuenosAires(),
   };
+}
+
+/** Fecha de hoy (YYYY-MM-DD) en hora de Buenos Aires, para urgencias con deadline. */
+function todayInBuenosAires(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 const CHANNEL_FORMAT_RULES: Partial<Record<Channel, string>> = {
