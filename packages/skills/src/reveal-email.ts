@@ -1,5 +1,6 @@
 import type { DbClient, Venture } from '@wobox/core';
 import { apollo } from '@wobox/integrations';
+import { selectEmailContact } from './contact-selection.js';
 
 /** Tope de reveals (créditos Apollo) por corrida de auto-reveal. */
 export const MAX_REVEALS_PER_RUN = 10;
@@ -123,59 +124,126 @@ export async function revealContactEmail(db: DbClient, contactId: string): Promi
 
 type CandidateCompany = {
   id: string;
+  name: string;
+  apollo_id: string | null;
   contacts: Array<{
     id: string;
+    name: string;
     email: string | null;
     is_decision_maker: boolean | null;
     contact_source: string | null;
   }> | null;
 };
 
+/** Motivos por los que una company queda sin email después del auto-reveal. */
+export type RevealFailureReason =
+  | 'sin_contactos'
+  | 'sin_apollo_id'
+  | 'apollo_sin_match'
+  | 'apollo_sin_email'
+  | 'apollo_sin_email_previo'
+  | 'contacto_no_encontrado'
+  | 'tope_reveals'
+  | 'error';
+
+export const REVEAL_REASON_LABELS: Record<RevealFailureReason, string> = {
+  sin_contactos: 'sin contactos',
+  sin_apollo_id: 'sin apollo id (Apollo sin match por nombre)',
+  apollo_sin_match: 'Apollo sin match',
+  apollo_sin_email: 'Apollo sin email',
+  apollo_sin_email_previo: 'Apollo sin email (intento previo)',
+  contacto_no_encontrado: 'contacto no encontrado',
+  tope_reveals: `tope de ${MAX_REVEALS_PER_RUN} reveals`,
+  error: 'error',
+};
+
+export interface RevealCandidate {
+  contactId: string;
+  contactName: string;
+  companyName: string;
+  hasApolloOrgId: boolean;
+}
+
+export interface RevealCandidates {
+  candidates: RevealCandidate[];
+  /** Companies que no se intentan revelar, con el motivo. */
+  skipped: Array<{ companyName: string; reason: RevealFailureReason }>;
+  /** Companies que ya tienen algún contacto con email (no hace falta revelar). */
+  withEmail: number;
+}
+
 /**
- * Contactos a revelar para el venture: decision-maker (mismo criterio que generate-messages)
- * de companies `qualified`, sin email, sin draft de email pendiente y no marcados como
- * "sin email" en un intento anterior.
+ * Contactos a revelar para el venture, de companies `qualified` donde NINGÚN contacto
+ * tiene email. Se elige con el mismo criterio que generate-messages (`selectEmailContact`):
+ * si algún contacto ya tiene email no se gasta crédito. Sin `force`, se saltean las
+ * companies con draft de email pendiente (generate-messages no las va a regenerar).
  */
 export async function findRevealCandidates(
   db: DbClient,
   venture: Venture,
-  max = MAX_REVEALS_PER_RUN,
-): Promise<string[]> {
+  opts: { max?: number; force?: boolean } = {},
+): Promise<RevealCandidates> {
+  const max = opts.max ?? MAX_REVEALS_PER_RUN;
   const { data, error } = await db
     .from('companies')
-    .select('id, contacts(id, email, is_decision_maker, contact_source)')
+    .select('id, name, apollo_id, contacts(id, name, email, is_decision_maker, contact_source)')
     .eq('stage', 'qualified')
     .eq('venture', venture)
     .limit(50);
   if (error) throw new Error(`fetch companies: ${error.message}`);
   const companies = (data as unknown as CandidateCompany[]) ?? [];
-  if (companies.length === 0) return [];
+  const out: RevealCandidates = { candidates: [], skipped: [], withEmail: 0 };
+  if (companies.length === 0) return out;
 
-  const { data: msgs } = await db
-    .from('messages')
-    .select('company_id')
-    .eq('channel', 'email')
-    .eq('status', 'draft')
-    .in(
-      'company_id',
-      companies.map((c) => c.id),
-    );
-  const haveDraft = new Set(
-    ((msgs as Array<{ company_id: string }> | null) ?? []).map((m) => m.company_id),
-  );
+  const haveDraft = new Set<string>();
+  if (!opts.force) {
+    const { data: msgs } = await db
+      .from('messages')
+      .select('company_id')
+      .eq('channel', 'email')
+      .eq('status', 'draft')
+      .in(
+        'company_id',
+        companies.map((c) => c.id),
+      );
+    for (const m of (msgs as Array<{ company_id: string }> | null) ?? [])
+      haveDraft.add(m.company_id);
+  }
 
-  const out: string[] = [];
   for (const co of companies) {
-    if (out.length >= max) break;
     if (haveDraft.has(co.id)) continue;
-    const contacts = co.contacts ?? [];
-    const dm = contacts.find((c) => c.is_decision_maker) ?? contacts[0];
-    if (!dm) continue;
-    if ((dm.email ?? '').trim()) continue;
-    if (dm.contact_source === NO_EMAIL_SOURCE) continue;
-    out.push(dm.id);
+    const { contact, hasEmail } = selectEmailContact(co.contacts);
+    if (!contact) {
+      out.skipped.push({ companyName: co.name, reason: 'sin_contactos' });
+      continue;
+    }
+    if (hasEmail) {
+      out.withEmail++;
+      continue;
+    }
+    if (contact.contact_source === NO_EMAIL_SOURCE) {
+      out.skipped.push({ companyName: co.name, reason: 'apollo_sin_email_previo' });
+      continue;
+    }
+    if (out.candidates.length >= max) {
+      out.skipped.push({ companyName: co.name, reason: 'tope_reveals' });
+      continue;
+    }
+    out.candidates.push({
+      contactId: contact.id,
+      contactName: contact.name,
+      companyName: co.name,
+      hasApolloOrgId: Boolean(co.apollo_id),
+    });
   }
   return out;
+}
+
+export interface RevealFailure {
+  company: string;
+  contact: string | null;
+  reason: RevealFailureReason;
+  detail?: string;
 }
 
 export interface RevealBatchSummary {
@@ -183,24 +251,75 @@ export interface RevealBatchSummary {
   revealed: number;
   credits: number;
   failed: number;
+  /** Detalle por company de por qué quedó sin email (incluye las no intentadas). */
+  failures: RevealFailure[];
 }
 
 /** Auto-reveal en paralelo (para entrar en el timeout de Vercel) con tope MAX_REVEALS_PER_RUN. */
 export async function revealEmailsForVenture(
   db: DbClient,
   venture: Venture,
-  max = MAX_REVEALS_PER_RUN,
+  opts: { max?: number; force?: boolean } = {},
 ): Promise<RevealBatchSummary> {
-  const ids = await findRevealCandidates(db, venture, Math.min(max, MAX_REVEALS_PER_RUN));
-  const results = await Promise.allSettled(ids.map((id) => revealContact(db, id, 'auto-reveal')));
-  const summary: RevealBatchSummary = { attempted: ids.length, revealed: 0, credits: 0, failed: 0 };
-  for (const r of results) {
-    if (r.status === 'rejected') {
+  const max = Math.min(opts.max ?? MAX_REVEALS_PER_RUN, MAX_REVEALS_PER_RUN);
+  const { candidates, skipped } = await findRevealCandidates(db, venture, {
+    max,
+    ...(opts.force ? { force: true } : {}),
+  });
+  const results = await Promise.allSettled(
+    candidates.map((c) => revealContact(db, c.contactId, 'auto-reveal')),
+  );
+  const summary: RevealBatchSummary = {
+    attempted: candidates.length,
+    revealed: 0,
+    credits: 0,
+    failed: 0,
+    failures: skipped.map((s) => ({ company: s.companyName, contact: null, reason: s.reason })),
+  };
+  results.forEach((r, i) => {
+    const cand = candidates[i]!;
+    const fail = (reason: RevealFailureReason, detail?: string) => {
       summary.failed++;
-      continue;
+      summary.failures.push({
+        company: cand.companyName,
+        contact: cand.contactName,
+        reason,
+        ...(detail ? { detail } : {}),
+      });
+    };
+    if (r.status === 'rejected') {
+      fail('error', String(r.reason).slice(0, 200));
+      return;
     }
     summary.credits += r.value.credits;
-    if (r.value.status === 'revealed') summary.revealed++;
+    switch (r.value.status) {
+      case 'revealed':
+        summary.revealed++;
+        break;
+      case 'person_not_found':
+        fail(cand.hasApolloOrgId ? 'apollo_sin_match' : 'sin_apollo_id');
+        break;
+      case 'no_email':
+        fail('apollo_sin_email');
+        break;
+      case 'contact_not_found':
+        fail('contacto_no_encontrado');
+        break;
+    }
+  });
+  for (const f of summary.failures) {
+    console.warn(
+      `[auto-reveal] ${venture} ${f.company}${f.contact ? ` (${f.contact})` : ''}: ${REVEAL_REASON_LABELS[f.reason]}${f.detail ? ` — ${f.detail}` : ''}`,
+    );
   }
   return summary;
+}
+
+/** "2 Apollo sin match, 1 sin contactos" a partir de los fallos del reveal. */
+export function formatRevealReasons(failures: ReadonlyArray<{ reason: string }>): string {
+  const counts = new Map<string, number>();
+  for (const f of failures) counts.set(f.reason, (counts.get(f.reason) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([reason, n]) => `${n} ${REVEAL_REASON_LABELS[reason as RevealFailureReason] ?? reason}`)
+    .join(', ');
 }

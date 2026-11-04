@@ -4,6 +4,7 @@ import type { Channel, Venture } from '@wobox/core';
 import {
   MAX_REVEALS_PER_RUN,
   generateMessages,
+  revealEmail,
   scoreLeads,
   searchLeads,
   searchLeadsWeb,
@@ -31,6 +32,7 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   const revealed = toCount(formData.get('revealed'));
   const credits = toCount(formData.get('credits'));
   const revealError = String(formData.get('revealError') ?? '').trim();
+  const revealFailures = parseFailures(formData.get('revealFailures'));
 
   let result: Awaited<ReturnType<typeof generateMessages.run>>;
   try {
@@ -49,13 +51,36 @@ export async function generateMessagesAction(formData: FormData): Promise<string
   revalidatePath('/pipeline');
 
   if (!isEmail) return `${result.ok} drafts (ver /drafts)`;
+  // Las companies sin contactos van aparte (no son "sin email").
+  const reasons = revealEmail.formatRevealReasons(
+    revealFailures.filter((f) => f.reason !== 'sin_contactos'),
+  );
+  const noEmail = `${result.noEmail} sin email${result.noEmail > 0 && reasons ? ` (motivos: ${reasons})` : ''}`;
   const parts = [
-    `${revealed} emails revelados (${credits} créditos)`,
     `${result.ok} drafts`,
-    `${result.noEmail} sin email`,
+    `${revealed} emails revelados (${credits} créditos)`,
+    noEmail,
   ];
+  if (result.noContacts > 0) parts.push(`${result.noContacts} sin contactos`);
+  if (result.failed > 0) parts.push(`${result.failed} fallaron`);
   if (revealError) parts.push(`reveal falló: ${revealError.slice(0, 120)}`);
   return `${parts.join(', ')} (máx ${MAX_REVEALS_PER_RUN} reveals por corrida)`;
+}
+
+function parseFailures(v: FormDataEntryValue | null): Array<{ reason: string }> {
+  if (typeof v !== 'string' || !v) return [];
+  try {
+    const parsed: unknown = JSON.parse(v);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (f): f is { reason: string } =>
+        typeof f === 'object' &&
+        f !== null &&
+        typeof (f as { reason?: unknown }).reason === 'string',
+    );
+  } catch {
+    return [];
+  }
 }
 
 function toCount(v: FormDataEntryValue | null): number {
