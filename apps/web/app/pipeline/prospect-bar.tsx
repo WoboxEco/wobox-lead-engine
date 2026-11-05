@@ -1,8 +1,13 @@
 'use client';
 
+import { type GenerateFailure, formatGenerateSummary } from '@wobox/skills/summary';
 import { Loader2, Search, Sparkles } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { generateMessagesAction, prospectAction } from './prospect-actions';
+import { prospectAction } from './prospect-actions';
+
+/** Companies por request a /api/generate-messages (cada draft tarda ~3-8s en Claude). */
+const GENERATE_CHUNK_SIZE = 2;
 
 const VENTURES = [
   { value: 'wobox_fashion', label: 'Wobox Fashion' },
@@ -43,6 +48,9 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
   const [msgVenture, setMsgVenture] = useState(initialVenture);
   const [channel, setChannel] = useState('email');
   const [regenerate, setRegenerate] = useState(false);
+  const [retryNoEmail, setRetryNoEmail] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const router = useRouter();
 
   function runProspect() {
     setResult(null);
@@ -60,22 +68,22 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
 
   function runMessages() {
     setResult(null);
+    setProgress(null);
     setRunning('messages');
-    const fd = new FormData();
-    fd.set('venture', msgVenture);
-    fd.set('channel', channel);
-    if (regenerate) fd.set('regenerate', 'true');
+    const venture = msgVenture;
+    const ch = channel;
     startTransition(async () => {
-      if (channel === 'email') {
-        const r = await revealEmails(msgVenture, regenerate);
-        fd.set('revealed', String(r.revealed));
-        fd.set('credits', String(r.credits));
-        if (r.failures.length > 0) fd.set('revealFailures', JSON.stringify(r.failures));
-        if (r.error) fd.set('revealError', r.error);
-      }
-      const text = await generateMessagesAction(fd);
+      const text = await generateInBatches({
+        venture,
+        channel: ch,
+        regenerate,
+        retryNoEmail: ch === 'email' && retryNoEmail,
+        onProgress: setProgress,
+      });
       setResult({ which: 'messages', text });
+      setProgress(null);
       setRunning(null);
+      router.refresh();
     });
   }
 
@@ -230,9 +238,23 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
           />
           Regenerar (descarta los borradores pendientes de este negocio y canal)
         </label>
+        {channel === 'email' ? (
+          <label className="text-[12.5px] text-muted-strong flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={retryNoEmail}
+              onChange={(e) => setRetryNoEmail(e.target.checked)}
+              disabled={isPending}
+              className="accent-[var(--accent)]"
+            />
+            Reintentar emails no encontrados (ignora el intento previo en Apollo, gasta créditos)
+          </label>
+        ) : null}
 
         {running === 'messages' ? (
-          <p className="text-[12.5px] text-muted">Procesando… 1-2 min. No cierres la pestaña.</p>
+          <p className="text-[12.5px] text-muted">
+            {progress ?? 'Procesando…'} No cierres la pestaña.
+          </p>
         ) : null}
         {result?.which === 'messages' ? (
           <p className="text-[12.5px] text-muted-strong font-mono break-words">{result.text}</p>
@@ -248,6 +270,7 @@ type RevealFailure = { company: string; contact: string | null; reason: string }
 async function revealEmails(
   venture: string,
   force: boolean,
+  retryNoEmail: boolean,
 ): Promise<{ revealed: number; credits: number; failures: RevealFailure[]; error?: string }> {
   try {
     const controller = new AbortController();
@@ -255,7 +278,7 @@ async function revealEmails(
     const res = await fetch('/api/reveal-emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ venture, force }),
+      body: JSON.stringify({ venture, force, retryNoEmail }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -277,4 +300,90 @@ async function revealEmails(
     const msg = err instanceof Error && err.name === 'AbortError' ? 'timeout Apollo' : String(err);
     return { revealed: 0, credits: 0, failures: [], error: msg };
   }
+}
+
+type GenerateResponse = {
+  ok?: number;
+  noEmail?: number;
+  noContacts?: number;
+  failures?: GenerateFailure[];
+  pending?: string[];
+  error?: string;
+};
+
+async function postGenerate(body: Record<string, unknown>): Promise<GenerateResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 65_000);
+  try {
+    const res = await fetch('/api/generate-messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as GenerateResponse;
+    if (!res.ok || data.error) return { error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  } catch (err) {
+    return { error: err instanceof Error && err.name === 'AbortError' ? 'timeout' : String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Reveal (solo email) → plan → genera de a GENERATE_CHUNK_SIZE companies por request,
+ * así ninguna request pasa el timeout de Vercel Hobby. Devuelve el resumen final.
+ */
+async function generateInBatches(args: {
+  venture: string;
+  channel: string;
+  regenerate: boolean;
+  retryNoEmail: boolean;
+  onProgress: (text: string) => void;
+}): Promise<string> {
+  const { venture, channel, regenerate, retryNoEmail, onProgress } = args;
+  const isEmail = channel === 'email';
+
+  let reveal: Awaited<ReturnType<typeof revealEmails>> | null = null;
+  if (isEmail) {
+    onProgress('Revelando emails en Apollo…');
+    reveal = await revealEmails(venture, regenerate, retryNoEmail);
+  }
+
+  onProgress('Buscando leads a redactar…');
+  const plan = await postGenerate({ venture, channel, regenerate });
+  if (plan.error) return `Error: ${plan.error.slice(0, 200)}`;
+  const pending = plan.pending ?? [];
+
+  let ok = 0;
+  const failures: Array<{ reason: string }> = [];
+  for (let i = 0; i < pending.length; i += GENERATE_CHUNK_SIZE) {
+    const ids = pending.slice(i, i + GENERATE_CHUNK_SIZE);
+    onProgress(`Generando ${i + ids.length}/${pending.length}…`);
+    const r = await postGenerate({ venture, channel, regenerate, ids });
+    if (r.error) {
+      // La request entera falló (timeout, 500): cuenta como fallo de cada company del lote.
+      for (const _ of ids) failures.push({ reason: `request falló: ${r.error.slice(0, 120)}` });
+      continue;
+    }
+    ok += r.ok ?? 0;
+    failures.push(...(r.failures ?? []));
+  }
+
+  return formatGenerateSummary({
+    channel,
+    ok,
+    noEmail: plan.noEmail ?? 0,
+    noContacts: plan.noContacts ?? 0,
+    failures,
+    ...(reveal
+      ? {
+          revealed: reveal.revealed,
+          credits: reveal.credits,
+          revealFailures: reveal.failures,
+          ...(reveal.error ? { revealError: reveal.error } : {}),
+        }
+      : {}),
+  });
 }

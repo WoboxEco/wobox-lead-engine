@@ -18,6 +18,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
+    "prompts:bundle": "pnpm --filter @wobox/prompts run bundle",
     "db:types": "supabase gen types typescript --local > packages/core/src/database.types.ts",
     "db:migrate": "pnpm skill setup-database"
   },

@@ -11,7 +11,11 @@ const VENTURES = new Set<Venture>(['wobox_food', 'wobox_fashion', 'loop']);
  *  Lo llama el cliente antes de generar drafts de email, fuera de la server action. */
 export async function POST(req: Request) {
   try {
-    const { venture, force } = (await req.json()) as { venture?: string; force?: boolean };
+    const { venture, force, retryNoEmail } = (await req.json()) as {
+      venture?: string;
+      force?: boolean;
+      retryNoEmail?: boolean;
+    };
     if (!venture || !VENTURES.has(venture as Venture)) {
       return NextResponse.json({ error: 'Venture inválido' }, { status: 400 });
     }
@@ -19,6 +23,8 @@ export async function POST(req: Request) {
     // force (Regenerar): incluir companies con draft de email pendiente, que se van a regenerar.
     const summary = await revealEmail.revealEmailsForVenture(db, venture as Venture, {
       force: force === true,
+      // "Reintentar emails no encontrados": ignora el intento previo sin email (gasta créditos).
+      retryNoEmail: retryNoEmail === true,
     });
     return NextResponse.json(summary);
   } catch (err) {

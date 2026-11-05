@@ -1,9 +1,15 @@
 import type { DbClient, Venture } from '@wobox/core';
 import { apollo } from '@wobox/integrations';
 import { selectEmailContact } from './contact-selection.js';
+import {
+  MAX_REVEALS_PER_RUN,
+  REVEAL_REASON_LABELS,
+  type RevealFailureReason,
+  formatRevealReasons,
+} from './summary.js';
 
-/** Tope de reveals (créditos Apollo) por corrida de auto-reveal. */
-export const MAX_REVEALS_PER_RUN = 10;
+export { MAX_REVEALS_PER_RUN, REVEAL_REASON_LABELS, formatRevealReasons };
+export type { RevealFailureReason };
 
 /** Marca en contacts.contact_source cuando Apollo encontró a la persona pero sin email.
  *  El auto-reveal saltea esos contactos para no gastar créditos de nuevo en cada corrida. */
@@ -135,27 +141,13 @@ type CandidateCompany = {
   }> | null;
 };
 
-/** Motivos por los que una company queda sin email después del auto-reveal. */
-export type RevealFailureReason =
-  | 'sin_contactos'
-  | 'sin_apollo_id'
-  | 'apollo_sin_match'
-  | 'apollo_sin_email'
-  | 'apollo_sin_email_previo'
-  | 'contacto_no_encontrado'
-  | 'tope_reveals'
-  | 'error';
-
-export const REVEAL_REASON_LABELS: Record<RevealFailureReason, string> = {
-  sin_contactos: 'sin contactos',
-  sin_apollo_id: 'sin apollo id (Apollo sin match por nombre)',
-  apollo_sin_match: 'Apollo sin match',
-  apollo_sin_email: 'Apollo sin email',
-  apollo_sin_email_previo: 'Apollo sin email (intento previo)',
-  contacto_no_encontrado: 'contacto no encontrado',
-  tope_reveals: `tope de ${MAX_REVEALS_PER_RUN} reveals`,
-  error: 'error',
-};
+export interface RevealOptions {
+  max?: number;
+  /** Incluir companies con draft de email pendiente (Regenerar). */
+  force?: boolean;
+  /** Reintentar contactos con "Apollo sin email (intento previo)". Gasta créditos. */
+  retryNoEmail?: boolean;
+}
 
 export interface RevealCandidate {
   contactId: string;
@@ -177,11 +169,13 @@ export interface RevealCandidates {
  * tiene email. Se elige con el mismo criterio que generate-messages (`selectEmailContact`):
  * si algún contacto ya tiene email no se gasta crédito. Sin `force`, se saltean las
  * companies con draft de email pendiente (generate-messages no las va a regenerar).
+ * Con `retryNoEmail` se reintentan los contactos que Apollo ya devolvió sin email
+ * (`contact_source = NO_EMAIL_SOURCE`): gasta créditos de nuevo.
  */
 export async function findRevealCandidates(
   db: DbClient,
   venture: Venture,
-  opts: { max?: number; force?: boolean } = {},
+  opts: RevealOptions = {},
 ): Promise<RevealCandidates> {
   const max = opts.max ?? MAX_REVEALS_PER_RUN;
   const { data, error } = await db
@@ -221,7 +215,7 @@ export async function findRevealCandidates(
       out.withEmail++;
       continue;
     }
-    if (contact.contact_source === NO_EMAIL_SOURCE) {
+    if (contact.contact_source === NO_EMAIL_SOURCE && !opts.retryNoEmail) {
       out.skipped.push({ companyName: co.name, reason: 'apollo_sin_email_previo' });
       continue;
     }
@@ -259,12 +253,13 @@ export interface RevealBatchSummary {
 export async function revealEmailsForVenture(
   db: DbClient,
   venture: Venture,
-  opts: { max?: number; force?: boolean } = {},
+  opts: RevealOptions = {},
 ): Promise<RevealBatchSummary> {
   const max = Math.min(opts.max ?? MAX_REVEALS_PER_RUN, MAX_REVEALS_PER_RUN);
   const { candidates, skipped } = await findRevealCandidates(db, venture, {
     max,
     ...(opts.force ? { force: true } : {}),
+    ...(opts.retryNoEmail ? { retryNoEmail: true } : {}),
   });
   const results = await Promise.allSettled(
     candidates.map((c) => revealContact(db, c.contactId, 'auto-reveal')),
@@ -313,13 +308,4 @@ export async function revealEmailsForVenture(
     );
   }
   return summary;
-}
-
-/** "2 Apollo sin match, 1 sin contactos" a partir de los fallos del reveal. */
-export function formatRevealReasons(failures: ReadonlyArray<{ reason: string }>): string {
-  const counts = new Map<string, number>();
-  for (const f of failures) counts.set(f.reason, (counts.get(f.reason) ?? 0) + 1);
-  return [...counts.entries()]
-    .map(([reason, n]) => `${n} ${REVEAL_REASON_LABELS[reason as RevealFailureReason] ?? reason}`)
-    .join(', ');
 }
