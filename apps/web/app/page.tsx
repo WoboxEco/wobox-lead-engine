@@ -1,4 +1,4 @@
-import { createAdminClient } from '@wobox/core';
+import { type PipelineCounts, countRows, createAdminClient, getPipelineCounts } from '@wobox/core';
 import { ArrowRight, Files, KanbanSquare, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 
@@ -49,32 +49,31 @@ const VENTURE_LABELS: Record<string, string> = {
 
 export default async function HomePage() {
   const db = createAdminClient();
-  const [{ data: companiesData, error }, { count: draftsCount }] = await Promise.all([
-    db.from('companies').select('stage, venture'),
-    db.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
-  ]);
-
-  if (error) {
+  // Conteos via head-count queries (no select de filas): Supabase corta los selects
+  // en 1000 filas, asi que contar en memoria daba numeros truncados.
+  let counts: PipelineCounts;
+  let draftsCount: number;
+  try {
+    [counts, draftsCount] = await Promise.all([
+      getPipelineCounts(db),
+      countRows(
+        db.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
+      ),
+    ]);
+  } catch (err) {
     return (
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
-        <p className="text-muted mt-2">Error cargando datos: {error.message}</p>
+        <p className="text-muted mt-2">Error cargando datos: {(err as Error).message}</p>
       </div>
     );
   }
 
-  const rows = (companiesData as unknown as Array<{ stage: string; venture: string }>) ?? [];
-  const byStage = new Map<string, number>();
-  const byVenture = new Map<string, number>();
-  for (const r of rows) {
-    byStage.set(r.stage, (byStage.get(r.stage) ?? 0) + 1);
-    byVenture.set(r.venture, (byVenture.get(r.venture) ?? 0) + 1);
-  }
-
-  const activeTotal = rows.filter((r) => r.stage !== 'discarded').length;
-  const meetingsTotal = byStage.get('meeting_booked') ?? 0;
-  const qualifiedTotal = byStage.get('qualified') ?? 0;
-  const nurturingTotal = byStage.get('nurturing') ?? 0;
+  const byStage = counts.byStage;
+  const activeTotal = counts.active;
+  const meetingsTotal = byStage.meeting_booked ?? 0;
+  const qualifiedTotal = byStage.qualified ?? 0;
+  const nurturingTotal = byStage.nurturing ?? 0;
 
   return (
     <div className="space-y-8">
@@ -82,7 +81,7 @@ export default async function HomePage() {
         <p className="text-[12px] uppercase tracking-[0.1em] text-muted mb-1">Wobox Lead Engine</p>
         <h1 className="text-3xl font-semibold tracking-tight">Pipeline general</h1>
         <p className="text-muted mt-1.5 text-[13.5px]">
-          {activeTotal} companies activas · {rows.length} totales
+          {activeTotal} companies activas · {counts.total} totales
         </p>
       </div>
 
@@ -99,7 +98,7 @@ export default async function HomePage() {
         <SectionHeader title="Por stage" subtitle="Distribucion del pipeline" />
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 mt-4">
           {STAGES_ORDER.map((s) => (
-            <StageCard key={s} stage={s} value={byStage.get(s) ?? 0} />
+            <StageCard key={s} stage={s} value={byStage[s] ?? 0} />
           ))}
         </div>
       </section>
@@ -109,7 +108,7 @@ export default async function HomePage() {
         <SectionHeader title="Deals" subtitle="Pipeline de ventas post-meeting" />
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2.5 mt-4">
           {DEAL_STAGES_ORDER.map((s) => (
-            <StageCard key={s} stage={s} value={byStage.get(s) ?? 0} />
+            <StageCard key={s} stage={s} value={byStage[s] ?? 0} />
           ))}
         </div>
       </section>
@@ -118,7 +117,7 @@ export default async function HomePage() {
       <section>
         <SectionHeader title="Por venture" subtitle="Companies activas en cada producto" />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
-          {[...byVenture.entries()]
+          {Object.entries(counts.byVenture)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([v, n]) => (
               <VentureCard key={v} venture={v} value={n} />
@@ -134,7 +133,7 @@ export default async function HomePage() {
             href="/drafts"
             icon={Files}
             title="Drafts"
-            count={draftsCount ?? 0}
+            count={draftsCount}
             description="Mensajes esperando aprobacion"
           />
           <QuickLink

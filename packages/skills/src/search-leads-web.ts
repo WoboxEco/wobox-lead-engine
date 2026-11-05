@@ -1,4 +1,4 @@
-import { createAdminClient, createLogger, writeErrorLog } from '@wobox/core';
+import { createAdminClient, createLogger, fetchAllRows, writeErrorLog } from '@wobox/core';
 import { apify } from '@wobox/integrations';
 
 export const DEFAULT_MODEL = 'haiku';
@@ -82,15 +82,20 @@ export async function run(opts: SearchLeadsWebOptions): Promise<void> {
   }
 
   // Dedup: cargar companies existentes de venture=loop para matchear.
-  const { data: existing } = await db
-    .from('companies')
-    .select('name, website, website_normalized, instagram_handle, region, neighborhood')
-    .eq('venture', 'loop');
+  // Paginado con .range(): un select plano se corta en 1000 filas y perderia dedup.
+  const existing = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    db
+      .from('companies')
+      .select('name, website, website_normalized, instagram_handle, region, neighborhood')
+      .eq('venture', 'loop')
+      .order('id')
+      .range(from, to),
+  );
 
   const seenWebsite = new Set<string>();
   const seenIg = new Set<string>();
   const seenNameRegion = new Set<string>();
-  for (const c of (existing as Array<Record<string, unknown>>) ?? []) {
+  for (const c of existing) {
     const wn = (c.website_normalized as string | null) ?? '';
     if (wn) seenWebsite.add(wn);
     const ig = (c.instagram_handle as string | null) ?? '';

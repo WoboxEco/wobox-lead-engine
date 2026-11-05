@@ -1,4 +1,6 @@
+import { countRows } from './counts.js';
 import type { DbClient } from './db.js';
+import { VENTURES } from './domain.js';
 
 export interface DailySummary {
   window_hours: number;
@@ -40,107 +42,78 @@ export async function buildDailySummary(
   ventureFilter: string | null,
 ): Promise<DailySummary> {
   const since = new Date(Date.now() - hours * 3_600_000).toISOString();
-  const ventureEq = ventureFilter;
 
-  const newCompaniesQ = db
-    .from('companies')
-    .select('id, venture, stage', { count: 'exact' })
-    .gte('created_at', since);
-  const { count: newCount } = ventureEq
-    ? await newCompaniesQ.eq('venture', ventureEq)
-    : await newCompaniesQ;
+  // Todo se cuenta con head-count queries ({ count: 'exact', head: true }) en paralelo.
+  // No traer filas para contar: Supabase corta los selects en 1000 filas (ver counts.ts).
+  const companies = (venture: string | null) => {
+    const q = db.from('companies').select('id', { count: 'exact', head: true });
+    return venture ? q.eq('venture', venture) : q;
+  };
+  const messages = (venture: string | null) => {
+    const q = db
+      .from('messages')
+      .select('id, companies!inner(venture)', { count: 'exact', head: true });
+    return venture ? q.eq('companies.venture', venture) : q;
+  };
+  const interactions = (venture: string | null) => {
+    const q = db
+      .from('interactions')
+      .select('id, companies!inner(venture)', { count: 'exact', head: true });
+    return venture ? q.eq('companies.venture', venture) : q;
+  };
+  const nurture = (venture: string | null) => {
+    const q = db.from('nurture_today').select('venture', { count: 'exact', head: true });
+    return venture ? q.eq('venture', venture) : q;
+  };
 
-  const draftsQ = db
-    .from('messages')
-    .select('id, companies!inner(venture)', { count: 'exact', head: false })
-    .eq('status', 'draft');
-  const { data: draftsData } = ventureEq
-    ? await draftsQ.eq('companies.venture', ventureEq)
-    : await draftsQ;
-  const draftRows = (draftsData as unknown as Array<{ companies: { venture: string } }>) ?? [];
+  const v = ventureFilter;
+  const [
+    newCount,
+    draftsCount,
+    sentCount,
+    meetingsCount,
+    repliesCount,
+    nurtureCount,
+    qualifiedCount,
+    perVenture,
+  ] = await Promise.all([
+    countRows(companies(v).gte('created_at', since)),
+    countRows(messages(v).eq('status', 'draft')),
+    countRows(messages(v).eq('status', 'sent').gte('sent_at', since)),
+    countRows(interactions(v).eq('type', 'meeting').gte('performed_at', since)),
+    countRows(interactions(v).eq('outcome', 'replied').gte('performed_at', since)),
+    countRows(nurture(v)),
+    countRows(companies(v).eq('stage', 'qualified')),
+    Promise.all(
+      VENTURES.map((venture) =>
+        Promise.all([
+          countRows(companies(venture).gte('created_at', since)),
+          countRows(companies(venture).eq('stage', 'qualified')),
+          countRows(companies(venture).eq('stage', 'nurturing')),
+          countRows(companies(venture).eq('stage', 'meeting_booked')),
+          countRows(messages(venture).eq('status', 'draft')),
+        ]),
+      ),
+    ),
+  ]);
 
-  const sentQ = db
-    .from('messages')
-    .select('id, companies!inner(venture)', { count: 'exact' })
-    .eq('status', 'sent')
-    .gte('sent_at', since);
-  const { count: sentCount } = ventureEq
-    ? await sentQ.eq('companies.venture', ventureEq)
-    : await sentQ;
-
-  const meetingsQ = db
-    .from('interactions')
-    .select('id, companies!inner(venture)', { count: 'exact' })
-    .eq('type', 'meeting')
-    .gte('performed_at', since);
-  const { count: meetingsCount } = ventureEq
-    ? await meetingsQ.eq('companies.venture', ventureEq)
-    : await meetingsQ;
-
-  const repliesQ = db
-    .from('interactions')
-    .select('id, companies!inner(venture)', { count: 'exact' })
-    .eq('outcome', 'replied')
-    .gte('performed_at', since);
-  const { count: repliesCount } = ventureEq
-    ? await repliesQ.eq('companies.venture', ventureEq)
-    : await repliesQ;
-
-  const { data: nurtureData } = await db.from('nurture_today').select('venture');
-  const nurtureRows = (nurtureData as unknown as Array<{ venture: string }>) ?? [];
-  const nurtureCount = ventureEq
-    ? nurtureRows.filter((r) => r.venture === ventureEq).length
-    : nurtureRows.length;
-
-  const qualifiedQ = db
-    .from('companies')
-    .select('id, venture', { count: 'exact' })
-    .eq('stage', 'qualified');
-  const { count: qualifiedCount } = ventureEq
-    ? await qualifiedQ.eq('venture', ventureEq)
-    : await qualifiedQ;
-
-  const { data: allCompanies } = await db.from('companies').select('venture, stage, created_at');
   const byVenture: DailySummary['by_venture'] = {};
-  for (const c of (allCompanies as unknown as Array<{
-    venture: string;
-    stage: string;
-    created_at: string;
-  }>) ?? []) {
-    byVenture[c.venture] ??= {
-      new_companies: 0,
-      qualified: 0,
-      nurturing: 0,
-      meeting_booked: 0,
-      drafts: 0,
-    };
-    if (c.created_at >= since) byVenture[c.venture]!.new_companies++;
-    if (c.stage === 'qualified') byVenture[c.venture]!.qualified++;
-    if (c.stage === 'nurturing') byVenture[c.venture]!.nurturing++;
-    if (c.stage === 'meeting_booked') byVenture[c.venture]!.meeting_booked++;
-  }
-  for (const d of draftRows) {
-    byVenture[d.companies.venture] ??= {
-      new_companies: 0,
-      qualified: 0,
-      nurturing: 0,
-      meeting_booked: 0,
-      drafts: 0,
-    };
-    byVenture[d.companies.venture]!.drafts++;
-  }
+  VENTURES.forEach((venture, i) => {
+    const [newC, qualified, nurturing, meeting_booked, drafts] = perVenture[i] ?? [0, 0, 0, 0, 0];
+    byVenture[venture] = { new_companies: newC, qualified, nurturing, meeting_booked, drafts };
+  });
 
   return {
     window_hours: hours,
     generated_at: new Date().toISOString(),
     venture_filter: ventureFilter,
-    new_companies: newCount ?? 0,
-    drafts_pending: draftRows.length,
-    messages_sent: sentCount ?? 0,
-    meetings_booked: meetingsCount ?? 0,
-    replies: repliesCount ?? 0,
+    new_companies: newCount,
+    drafts_pending: draftsCount,
+    messages_sent: sentCount,
+    meetings_booked: meetingsCount,
+    replies: repliesCount,
     nurture_today: nurtureCount,
-    qualified_without_contact: qualifiedCount ?? 0,
+    qualified_without_contact: qualifiedCount,
     by_venture: byVenture,
   };
 }

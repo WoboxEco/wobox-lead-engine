@@ -1,4 +1,4 @@
-import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
+import { type DbClient, createAdminClient, createLogger, fetchAllRows } from '@wobox/core';
 
 export interface SourcingCasOptions {
   /** Limite de socios a procesar (default: todos) */
@@ -85,7 +85,9 @@ export async function run(opts: SourcingCasOptions): Promise<void> {
     ? listings.filter((l) => l.category === categoryFilter)
     : listings;
   const truncated = filtered.slice(0, limit);
-  console.log(`\nListings encontrados: ${listings.length} (filtrados: ${filtered.length}, a procesar: ${truncated.length})`);
+  console.log(
+    `\nListings encontrados: ${listings.length} (filtrados: ${filtered.length}, a procesar: ${truncated.length})`,
+  );
 
   if (truncated.length === 0) {
     console.log('Nada para procesar.');
@@ -94,8 +96,11 @@ export async function run(opts: SourcingCasOptions): Promise<void> {
 
   // 2) Pre-cargar dedup por website (CAS no expone hubspot_id)
   const existingNames = new Set<string>();
-  const { data: existing } = await db.from('companies').select('name').eq('venture', 'wobox_food');
-  for (const r of (existing as Array<{ name: string }> | null) ?? []) {
+  // Paginado con .range(): wobox_food tiene >1000 companies y un select plano se corta.
+  const existing = await fetchAllRows<{ name: string }>((from, to) =>
+    db.from('companies').select('name').eq('venture', 'wobox_food').order('id').range(from, to),
+  );
+  for (const r of existing) {
     existingNames.add(r.name.toLowerCase().trim());
   }
   log.info({ existing: existingNames.size }, 'companies wobox_food precargadas para dedup');
@@ -136,14 +141,7 @@ export async function run(opts: SourcingCasOptions): Promise<void> {
         continue;
       }
 
-      const companyId = await insertCompany(
-        db,
-        companyName,
-        item.url,
-        subsector,
-        region,
-        stage,
-      );
+      const companyId = await insertCompany(db, companyName, item.url, subsector, region, stage);
       inserted++;
       existingNames.add(dedupKey);
 
@@ -370,11 +368,7 @@ async function insertCompany(
   return (data as { id: string }).id;
 }
 
-async function insertContact(
-  db: DbClient,
-  companyId: string,
-  detail: CasDetail,
-): Promise<number> {
+async function insertContact(db: DbClient, companyId: string, detail: CasDetail): Promise<number> {
   // Si no hay nombre de contacto pero si email empresa, creamos un contact con email empresa
   // Si hay nombre + email contacto, ese es el decision maker (probablemente)
   const contacts: Array<Record<string, unknown>> = [];

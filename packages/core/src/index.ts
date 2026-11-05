@@ -4,4 +4,5 @@ export * from './domain.js';
 export * from './logger.js';
 export * from './errors.js';
 export * from './daily-summary.js';
+export * from './counts.js';
 export type { Database, Json } from './database.types.js';

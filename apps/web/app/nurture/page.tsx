@@ -1,4 +1,4 @@
-import { createAdminClient } from '@wobox/core';
+import { createAdminClient, fetchAllRows } from '@wobox/core';
 import { CalendarClock, Check, Send, Trash2 } from 'lucide-react';
 import { approveDraft, discardDraft, markSentDraft } from '../drafts/actions';
 
@@ -13,7 +13,16 @@ const VENTURE_LABELS: Record<string, string> = {
 export default async function NurturePage() {
   const db = createAdminClient();
 
-  const { data, error } = await db.from('nurture_today').select('*');
+  // Paginado con .range(): un select plano se corta en 1000 filas.
+  let data: unknown[] = [];
+  let error: { message: string } | null = null;
+  try {
+    data = await fetchAllRows((from, to) =>
+      db.from('nurture_today').select('*').order('message_id').range(from, to),
+    );
+  } catch (err) {
+    error = { message: (err as Error).message };
+  }
 
   if (error) {
     return (

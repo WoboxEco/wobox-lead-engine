@@ -1,4 +1,4 @@
-import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
+import { type DbClient, countRows, createAdminClient, createLogger } from '@wobox/core';
 import { checkWarmPath, enrichLead, scoreLeads, searchLeads, searchLeadsWeb } from '@wobox/skills';
 
 export interface FullProspectingOptions {
@@ -141,23 +141,18 @@ export async function run(opts: FullProspectingOptions): Promise<void> {
 }
 
 async function snapshot(db: DbClient, venture: string): Promise<Snapshot> {
-  const { data } = await db.from('companies').select('stage').eq('venture', venture);
-  const rows = (data as unknown as Array<{ stage: string }>) ?? [];
-  const s: Snapshot = {
-    new: 0,
-    enriched: 0,
-    qualified: 0,
-    nurturing: 0,
-    discarded: 0,
-    total: rows.length,
-  };
-  const counts = s as unknown as Record<string, number>;
-  for (const r of rows) {
-    if (r.stage in s && typeof counts[r.stage] === 'number') {
-      counts[r.stage] = (counts[r.stage] ?? 0) + 1;
-    }
-  }
-  return s;
+  // Head-count queries: un select de filas se corta en 1000 y daba counts truncados.
+  const head = () =>
+    db.from('companies').select('id', { count: 'exact', head: true }).eq('venture', venture);
+  const [total, n, enriched, qualified, nurturing, discarded] = await Promise.all([
+    countRows(head()),
+    countRows(head().eq('stage', 'new')),
+    countRows(head().eq('stage', 'enriched')),
+    countRows(head().eq('stage', 'qualified')),
+    countRows(head().eq('stage', 'nurturing')),
+    countRows(head().eq('stage', 'discarded')),
+  ]);
+  return { new: n, enriched, qualified, nurturing, discarded, total };
 }
 
 function printSnapshot(label: string, s: Snapshot): void {
