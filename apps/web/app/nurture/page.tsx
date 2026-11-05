@@ -1,6 +1,6 @@
 import { createAdminClient } from '@wobox/core';
 import { CalendarClock, Check, Send, Trash2 } from 'lucide-react';
-import { approveDraft, discardDraft, sendDraft } from '../drafts/actions';
+import { approveDraft, discardDraft, markSentDraft } from '../drafts/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,12 +125,22 @@ export default async function NurturePage() {
                                   </button>
                                 </form>
                               ) : null}
-                              <form action={sendDraft}>
-                                <input type="hidden" name="id" value={r.message_id} />
-                                <button type="submit" className={btnSecondary}>
-                                  <Send size={12} /> Enviado
-                                </button>
-                              </form>
+                              {r.channel === 'email' ? (
+                                <a
+                                  href="/drafts"
+                                  title="Los emails se envían desde /drafts confirmando el destinatario"
+                                  className={btnSecondary}
+                                >
+                                  <Send size={12} /> Enviar en Drafts
+                                </a>
+                              ) : (
+                                <form action={markSentDraft}>
+                                  <input type="hidden" name="id" value={r.message_id} />
+                                  <button type="submit" className={btnSecondary}>
+                                    <Send size={12} /> Enviado
+                                  </button>
+                                </form>
+                              )}
                               <form action={discardDraft}>
                                 <input type="hidden" name="id" value={r.message_id} />
                                 <button type="submit" className={btnDanger}>
