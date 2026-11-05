@@ -5,6 +5,7 @@ import { changeStage, discardCompany } from './actions';
 import { UnlockButton } from './unlock-button';
 
 import { ProspectBar } from './prospect-bar';
+import { RecentSearches } from './recent-searches';
 import { VentureSelect } from './venture-select';
 
 export const dynamic = 'force-dynamic';
@@ -87,7 +88,15 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     instagram_handle: string | null;
     social_followers: number | null;
     scores: Array<{ total_score: number; scored_at: string }>;
-    contacts: Array<{ id: string; name: string; role: string | null; email: string | null; linkedin_url: string | null; warm_path: string | null; is_decision_maker: boolean | null }>;
+    contacts: Array<{
+      id: string;
+      name: string;
+      role: string | null;
+      email: string | null;
+      linkedin_url: string | null;
+      warm_path: string | null;
+      is_decision_maker: boolean | null;
+    }>;
   };
 
   const minScoreNum = minScore ? Number(minScore) : null;
@@ -122,6 +131,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
       {/* Acciones: +Prospect (sourcing+scoring) y Generar mensajes */}
       <ProspectBar defaultVenture={venture ?? ''} />
+      <RecentSearches />
 
       {/* Filtros */}
       <form method="get" className="surface p-4">
@@ -252,13 +262,15 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                               ) : (
                                 <UnlockButton contactId={c.id} />
                               )}
-                              <span className={c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'}>
+                              <span
+                                className={
+                                  c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'
+                                }
+                              >
                                 {c.name}
                               </span>
                               {c.role && <span className="text-muted">· {c.role}</span>}
-                              {c.email && (
-                                <span className="text-muted">· {c.email}</span>
-                              )}
+                              {c.email && <span className="text-muted">· {c.email}</span>}
                             </div>
                           ))}
                         </div>
