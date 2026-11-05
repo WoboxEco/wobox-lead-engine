@@ -1,13 +1,20 @@
 'use client';
 
+import {
+  PROSPECT_REGIONS,
+  type SearchLeadsResult,
+  formatProspectSummary,
+} from '@wobox/skills/prospect-summary';
 import { type GenerateFailure, formatGenerateSummary } from '@wobox/skills/summary';
 import { Loader2, Search, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { prospectAction } from './prospect-actions';
 
 /** Companies por request a /api/generate-messages (cada draft tarda ~3-8s en Claude). */
 const GENERATE_CHUNK_SIZE = 2;
+
+/** Companies por request a /api/score-leads (máx MAX_SCORE_IDS_PER_REQUEST = 3). */
+const SCORE_CHUNK_SIZE = 3;
 
 const VENTURES = [
   { value: 'wobox_fashion', label: 'Wobox Fashion' },
@@ -45,6 +52,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
   const [prospectVenture, setProspectVenture] = useState(initialVenture);
   const [prospectLimit, setProspectLimit] = useState('25');
   const [subsector, setSubsector] = useState('todos');
+  const [region, setRegion] = useState<string>(PROSPECT_REGIONS[0].value);
   const [msgVenture, setMsgVenture] = useState(initialVenture);
   const [channel, setChannel] = useState('email');
   const [regenerate, setRegenerate] = useState(false);
@@ -54,15 +62,18 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
 
   function runProspect() {
     setResult(null);
+    setProgress(null);
     setRunning('prospect');
-    const fd = new FormData();
-    fd.set('venture', prospectVenture);
-    fd.set('limit', prospectLimit);
-    if (prospectVenture === 'wobox_fashion') fd.set('subsector', subsector);
+    const venture = prospectVenture;
+    const body: Record<string, unknown> = { venture, limit: prospectLimit };
+    if (venture === 'wobox_fashion') body.subsector = subsector;
+    if (venture !== 'loop') body.region = region;
     startTransition(async () => {
-      const text = await prospectAction(fd);
+      const text = await prospectInSteps({ venture, body, onProgress: setProgress });
       setResult({ which: 'prospect', text });
+      setProgress(null);
       setRunning(null);
+      router.refresh();
     });
   }
 
@@ -97,7 +108,8 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <h2 className="text-[14px] font-semibold">Prospectar leads nuevos</h2>
           </div>
           <p className={`${labelClass} mt-1`}>
-            Trae leads nuevos (Apollo o web) y los puntúa con IA. Apollo gasta 1 crédito.
+            Trae leads nuevos (Apollo o web) y los puntúa con IA. Apollo gasta 1 crédito por página
+            (máx 3 si las primeras solo traen duplicados).
           </p>
         </div>
 
@@ -134,6 +146,23 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               </select>
             </div>
           ) : null}
+          {prospectVenture !== 'loop' ? (
+            <div className="flex flex-col gap-1">
+              <span className={labelClass}>Región</span>
+              <select
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+                disabled={isPending}
+                className={selectClass}
+              >
+                {PROSPECT_REGIONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-1">
             <span className={labelClass}>Cantidad</span>
             <input
@@ -162,7 +191,9 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
         </div>
 
         {running === 'prospect' ? (
-          <p className="text-[12.5px] text-muted">Procesando… ~1 min. No cierres la pestaña.</p>
+          <p className="text-[12.5px] text-muted">
+            {progress ?? 'Procesando…'} No cierres la pestaña.
+          </p>
         ) : null}
         {result?.which === 'prospect' ? (
           <p className="text-[12.5px] text-muted-strong font-mono break-words">{result.text}</p>
@@ -262,6 +293,72 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
       </div>
     </div>
   );
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T | { error: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 65_000);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+    if (!res.ok || data.error) return { error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  } catch (err) {
+    return { error: err instanceof Error && err.name === 'AbortError' ? 'timeout' : String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Sourcing (/api/prospect) → scoring por lotes (/api/score-leads), en requests separadas
+ * para no pasar el timeout de Vercel Hobby. Devuelve el resumen final.
+ */
+async function prospectInSteps(args: {
+  venture: string;
+  body: Record<string, unknown>;
+  onProgress: (text: string) => void;
+}): Promise<string> {
+  const { venture, body, onProgress } = args;
+  onProgress(venture === 'loop' ? 'Buscando leads en la web…' : 'Buscando leads en Apollo…');
+  const src = await postJson<{ search: SearchLeadsResult | null; toScore: string[] }>(
+    '/api/prospect',
+    body,
+  );
+  if ('error' in src) return `Error en sourcing: ${src.error.slice(0, 200)}`;
+
+  const toScore = Array.isArray(src.toScore) ? src.toScore : [];
+  let qualified = 0;
+  let scored = 0;
+  const errors: string[] = [];
+  for (let i = 0; i < toScore.length; i += SCORE_CHUNK_SIZE) {
+    const ids = toScore.slice(i, i + SCORE_CHUNK_SIZE);
+    onProgress(`Puntuando ${i + ids.length}/${toScore.length}…`);
+    const r = await postJson<{ ok: number; failed: number; qualified: number }>(
+      '/api/score-leads',
+      { venture, ids },
+    );
+    if ('error' in r) {
+      errors.push(r.error);
+      continue;
+    }
+    scored += r.ok ?? 0;
+    qualified += r.qualified ?? 0;
+  }
+  const scoringNote = errors.length
+    ? ` · ${errors.length} lote(s) de scoring fallaron: ${errors[0]?.slice(0, 120)}`
+    : '';
+
+  if (!src.search) {
+    // Loop (Apify): sin conteo de nuevos/duplicados.
+    return `${scored} puntuados, ${qualified} calificados${scoringNote}`;
+  }
+  return `${formatProspectSummary(src.search, errors.length && !scored ? null : qualified)}${scoringNote}`;
 }
 
 /** Auto-reveal de emails vía API route (fuera de la server action por el timeout de Vercel). */

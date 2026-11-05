@@ -22,13 +22,22 @@ export interface ScoreLeadsOptions {
   limit?: string;
   model?: string;
   stages?: string;
+  /** Scorear solo estas companies (dashboard: lotes chicos para no pasar el timeout). */
+  ids?: string[];
 }
 
-export async function run(opts: ScoreLeadsOptions): Promise<void> {
+export interface ScoreLeadsResult {
+  ok: number;
+  failed: number;
+  qualified: number;
+  discarded: number;
+}
+
+export async function run(opts: ScoreLeadsOptions): Promise<ScoreLeadsResult> {
   const log = createLogger('score-leads');
   const db = createAdminClient();
 
-  if (!opts.id && !opts.all) {
+  if (!opts.id && !opts.all && !opts.ids?.length) {
     throw new Error('Requiere --id <uuid> o --all');
   }
 
@@ -41,6 +50,12 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   let query = db.from('companies').select('*, contacts(*)').limit(limit);
   if (opts.id) {
     query = db.from('companies').select('*, contacts(*)').eq('id', opts.id);
+  } else if (opts.ids?.length) {
+    query = db
+      .from('companies')
+      .select('*, contacts(*)')
+      .in('id', opts.ids)
+      .in('stage', stagesFilter);
   } else {
     query = query.in('stage', stagesFilter);
     if (opts.venture) {
@@ -52,19 +67,21 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
   if (error) throw new Error(`Failed to fetch companies: ${error.message}`);
   if (!companies || companies.length === 0) {
     log.warn('no companies to score');
-    return;
+    return { ok: 0, failed: 0, qualified: 0, discarded: 0 };
   }
 
   log.info({ count: companies.length }, 'scoring companies');
 
   let ok = 0;
   let failed = 0;
+  let qualified = 0;
 
   for (const company of companies) {
     const c = company as unknown as Record<string, unknown> & { id: string; venture: Venture };
     try {
-      await scoreOne(c, db, log, model);
+      const stage = await scoreOne(c, db, log, model);
       ok += 1;
+      if (stage === 'qualified') qualified += 1;
     } catch (err) {
       failed += 1;
       log.error({ err, companyId: c.id }, 'score failed');
@@ -77,7 +94,8 @@ export async function run(opts: ScoreLeadsOptions): Promise<void> {
     }
   }
 
-  log.info({ ok, failed, total: companies.length }, 'scoring done');
+  log.info({ ok, failed, qualified, total: companies.length }, 'scoring done');
+  return { ok, failed, qualified, discarded: ok - qualified };
 }
 
 // Umbral de calificación: companies con total_score por debajo se descartan.
@@ -88,7 +106,7 @@ async function scoreOne(
   db: ReturnType<typeof createAdminClient>,
   log: ReturnType<typeof createLogger>,
   model: string | undefined,
-): Promise<void> {
+): Promise<'qualified' | 'discarded'> {
   const venture = company.venture;
   const scoringModel = scoringModelForVenture(venture);
 
@@ -142,6 +160,7 @@ async function scoreOne(
     .update({ stage: newStage, updated_at: new Date().toISOString() })
     .eq('id', company.id);
   if (stageErr) log.warn({ err: stageErr }, 'stage update failed');
+  return newStage;
 }
 
 type WoboxScore = ReturnType<typeof woboxScoreSchema.parse>;
