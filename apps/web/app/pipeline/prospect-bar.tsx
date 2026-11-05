@@ -8,7 +8,7 @@ import {
 import { type GenerateFailure, formatGenerateSummary } from '@wobox/skills/summary';
 import { Loader2, Search, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useState } from 'react';
 
 /** Companies por request a /api/generate-messages (cada draft tarda ~3-8s en Claude). */
 const GENERATE_CHUNK_SIZE = 2;
@@ -42,7 +42,6 @@ const selectClass =
 const labelClass = 'text-[11.5px] text-muted';
 
 export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
-  const [isPending, startTransition] = useTransition();
   const [running, setRunning] = useState<'prospect' | 'messages' | null>(null);
   const [result, setResult] = useState<{ which: 'prospect' | 'messages'; text: string } | null>(
     null,
@@ -60,42 +59,49 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
   const [progress, setProgress] = useState<string | null>(null);
   const router = useRouter();
 
-  function runProspect() {
+  // Estado propio en vez de useTransition: con revalidatePath el pending de la transición podía
+  // quedar colgado y dejaba los botones deshabilitados hasta recargar la página.
+  const busy = running !== null;
+
+  async function run(which: 'prospect' | 'messages', task: () => Promise<string>) {
+    if (running) return;
     setResult(null);
     setProgress(null);
-    setRunning('prospect');
+    setRunning(which);
+    try {
+      const text = await task();
+      setResult({ which, text });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResult({ which, text: `Error: ${msg.slice(0, 200)}` });
+    } finally {
+      setProgress(null);
+      setRunning(null);
+      // Refresca la tabla (server component) sin recargar: el resultado queda en pantalla.
+      router.refresh();
+    }
+  }
+
+  function runProspect() {
     const venture = prospectVenture;
     const body: Record<string, unknown> = { venture, limit: prospectLimit };
     if (venture === 'wobox_fashion') body.subsector = subsector;
     if (venture !== 'loop') body.region = region;
-    startTransition(async () => {
-      const text = await prospectInSteps({ venture, body, onProgress: setProgress });
-      setResult({ which: 'prospect', text });
-      setProgress(null);
-      setRunning(null);
-      router.refresh();
-    });
+    void run('prospect', () => prospectInSteps({ venture, body, onProgress: setProgress }));
   }
 
   function runMessages() {
-    setResult(null);
-    setProgress(null);
-    setRunning('messages');
     const venture = msgVenture;
     const ch = channel;
-    startTransition(async () => {
-      const text = await generateInBatches({
+    void run('messages', () =>
+      generateInBatches({
         venture,
         channel: ch,
         regenerate,
         retryNoEmail: ch === 'email' && retryNoEmail,
         onProgress: setProgress,
-      });
-      setResult({ which: 'messages', text });
-      setProgress(null);
-      setRunning(null);
-      router.refresh();
-    });
+      }),
+    );
   }
 
   return (
@@ -119,7 +125,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <select
               value={prospectVenture}
               onChange={(e) => setProspectVenture(e.target.value)}
-              disabled={isPending}
+              disabled={busy}
               className={selectClass}
             >
               {VENTURES.map((v) => (
@@ -135,7 +141,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               <select
                 value={subsector}
                 onChange={(e) => setSubsector(e.target.value)}
-                disabled={isPending}
+                disabled={busy}
                 className={selectClass}
               >
                 {FASHION_SUBSECTORS.map((s) => (
@@ -152,7 +158,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               <select
                 value={region}
                 onChange={(e) => setRegion(e.target.value)}
-                disabled={isPending}
+                disabled={busy}
                 className={selectClass}
               >
                 {PROSPECT_REGIONS.map((r) => (
@@ -169,7 +175,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               type="number"
               value={prospectLimit}
               onChange={(e) => setProspectLimit(e.target.value)}
-              disabled={isPending}
+              disabled={busy}
               className={`${selectClass} w-24`}
               min={1}
               max={100}
@@ -178,7 +184,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
           <button
             type="button"
             onClick={runProspect}
-            disabled={isPending}
+            disabled={busy}
             className="inline-flex items-center gap-1.5 bg-accent text-[var(--accent-foreground)] px-3 py-1.5 rounded-md text-[13px] font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             {running === 'prospect' ? (
@@ -219,7 +225,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <select
               value={msgVenture}
               onChange={(e) => setMsgVenture(e.target.value)}
-              disabled={isPending}
+              disabled={busy}
               className={selectClass}
             >
               {VENTURES.map((v) => (
@@ -234,7 +240,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <select
               value={channel}
               onChange={(e) => setChannel(e.target.value)}
-              disabled={isPending}
+              disabled={busy}
               className={selectClass}
             >
               {CHANNELS.map((c) => (
@@ -247,7 +253,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
           <button
             type="button"
             onClick={runMessages}
-            disabled={isPending}
+            disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium border border-[var(--border)] hover:bg-[var(--surface-elevated)] transition-colors disabled:opacity-50"
           >
             {running === 'messages' ? (
@@ -264,7 +270,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             type="checkbox"
             checked={regenerate}
             onChange={(e) => setRegenerate(e.target.checked)}
-            disabled={isPending}
+            disabled={busy}
             className="accent-[var(--accent)]"
           />
           Regenerar (descarta los borradores pendientes de este negocio y canal)
@@ -275,7 +281,7 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
               type="checkbox"
               checked={retryNoEmail}
               onChange={(e) => setRetryNoEmail(e.target.checked)}
-              disabled={isPending}
+              disabled={busy}
               className="accent-[var(--accent)]"
             />
             Reintentar emails no encontrados (ignora el intento previo en Apollo, gasta créditos)
@@ -369,17 +375,16 @@ async function revealEmails(
   force: boolean,
   retryNoEmail: boolean,
 ): Promise<{ revealed: number; credits: number; failures: RevealFailure[]; error?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 55_000);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55_000);
     const res = await fetch('/api/reveal-emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ venture, force, retryNoEmail }),
       signal: controller.signal,
     });
-    clearTimeout(timer);
-    const data = (await res.json()) as {
+    const data = (await res.json().catch(() => ({}))) as {
       revealed?: number;
       credits?: number;
       failures?: RevealFailure[];
@@ -396,6 +401,8 @@ async function revealEmails(
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError' ? 'timeout Apollo' : String(err);
     return { revealed: 0, credits: 0, failures: [], error: msg };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
