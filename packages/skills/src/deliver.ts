@@ -18,11 +18,13 @@ export interface DeliverResult {
 /**
  * Envio real del mensaje. Hoy solo email (Google Workspace SMTP);
  * el resto de canales se mandan a mano y devuelven { delivered: false }.
+ * `opts.to` fuerza el destinatario (si no, usa contacts.email).
  * Tira error si no se puede enviar, para que el caller NO marque el mensaje como sent.
  */
 export async function deliverMessage(
   db: DbClient,
   msg: DeliverableMessage,
+  opts: { to?: string } = {},
 ): Promise<DeliverResult> {
   if (msg.channel !== 'email') return { delivered: false };
 
@@ -30,13 +32,18 @@ export async function deliverMessage(
     throw new Error('Email no configurado: faltan GMAIL_USER / GMAIL_APP_PASSWORD');
   }
 
-  const { data: contactData, error: contactErr } = await db
-    .from('contacts')
-    .select('email')
-    .eq('id', msg.contact_id)
-    .single();
-  if (contactErr) throw new Error(`load contact: ${contactErr.message}`);
-  const to = ((contactData as { email: string | null } | null)?.email ?? '').trim();
+  // Si el caller pasa `to` explicito (lo que el founder ve en "Para:"), se usa ese.
+  // Si no, se lee el email actual del contacto.
+  let to = (opts.to ?? '').trim();
+  if (!to) {
+    const { data: contactData, error: contactErr } = await db
+      .from('contacts')
+      .select('email')
+      .eq('id', msg.contact_id)
+      .single();
+    if (contactErr) throw new Error(`load contact: ${contactErr.message}`);
+    to = ((contactData as { email: string | null } | null)?.email ?? '').trim();
+  }
   if (!to) {
     throw new Error('El contacto no tiene email. Revelalo con 🔓 en /pipeline');
   }

@@ -101,7 +101,47 @@ export async function saveEditAndApprove(formData: FormData): Promise<void> {
   revalidatePath('/');
 }
 
-export async function sendDraft(formData: FormData): Promise<void> {
+export type SendResult = { ok: true; to: string | null } | { ok: false; error: string };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function normalizeEmail(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/** true si el error de PostgREST es porque la columna messages.sent_to no existe (migration 0009 sin aplicar). */
+function isMissingSentToColumn(err: { message?: string; code?: string } | null): boolean {
+  if (!err) return false;
+  return err.code === 'PGRST204' || err.code === '42703' || /sent_to/.test(err.message ?? '');
+}
+
+async function saveContactEmailIfChanged(
+  db: ReturnType<typeof createAdminClient>,
+  contactId: string,
+  to: string,
+): Promise<void> {
+  const { data, error: loadErr } = await db
+    .from('contacts')
+    .select('email')
+    .eq('id', contactId)
+    .single();
+  if (loadErr) throw new Error(`load contact: ${loadErr.message}`);
+  if (normalizeEmail((data as { email: string | null } | null)?.email) === to) return;
+  const { error } = await db
+    .from('contacts')
+    .update({ email: to, contact_source: 'manual' })
+    .eq('id', contactId);
+  if (error) throw new Error(`guardar email: ${error.message}`);
+}
+
+/**
+ * Envía un draft. Para email, el form trae "Para:", asunto y cuerpo tal cual se ven
+ * en la card: se guardan PRIMERO (contacts.email + messages.subject/body) y después se
+ * entrega al destinatario explícito, así nunca se usa un email viejo del contacto.
+ */
+async function performSend(formData: FormData): Promise<{ to: string | null }> {
   const id = String(formData.get('id') ?? '');
   if (!id) throw new Error('missing id');
 
@@ -109,16 +149,54 @@ export async function sendDraft(formData: FormData): Promise<void> {
   assertStatus(msg, ['draft', 'approved']);
 
   const db = createAdminClient();
+  let to: string | null = null;
 
-  // Envio real (email via SMTP). Si falla, tira y el draft queda sin marcar como sent.
-  await deliver.deliverMessage(db, msg);
+  if (msg.channel === 'email') {
+    if (!formData.has('to')) {
+      throw new Error('Los emails se envían desde /drafts confirmando el destinatario ("Para:")');
+    }
+    to = normalizeEmail(formData.get('to'));
+    if (!EMAIL_RE.test(to) || to.length > 254)
+      throw new Error(`Email inválido: ${to || '(vacío)'}`);
+
+    const subjectRaw = formData.get('subject');
+    const bodyRaw = formData.get('body');
+    const subject =
+      typeof subjectRaw === 'string' ? subjectRaw.trim().slice(0, 200) : (msg.subject ?? '');
+    const body = typeof bodyRaw === 'string' ? bodyRaw.trim() : msg.body;
+    if (!subject) throw new Error('asunto vacío');
+    if (!body) throw new Error('cuerpo vacío');
+
+    // 1. Guardar destinatario en el contacto (si cambió).
+    await saveContactEmailIfChanged(db, msg.contact_id, to);
+
+    // 2. Guardar asunto/cuerpo en el mensaje.
+    if (subject !== msg.subject || body !== msg.body) {
+      const { error } = await db.from('messages').update({ subject, body }).eq('id', id);
+      if (error) throw new Error(`guardar asunto/cuerpo: ${error.message}`);
+      msg.subject = subject;
+      msg.body = body;
+    }
+  }
+
+  // 3. Envio real (email via SMTP) al destinatario explícito. Si falla, tira y el draft queda sin marcar.
+  const delivery = await deliver.deliverMessage(db, msg, to ? { to } : {});
+  if (delivery.to) to = delivery.to;
 
   const now = new Date().toISOString();
 
-  const { error: msgErr } = await db
+  let { error: msgErr } = await db
     .from('messages')
-    .update({ status: 'sent', sent_at: now })
+    .update({ status: 'sent', sent_at: now, sent_to: to })
     .eq('id', id);
+  if (isMissingSentToColumn(msgErr)) {
+    // Migration 0009 todavía no aplicada: no perder el estado sent (el mail ya salió).
+    // El destinatario queda igual en interactions.metadata.sent_to.
+    ({ error: msgErr } = await db
+      .from('messages')
+      .update({ status: 'sent', sent_at: now })
+      .eq('id', id));
+  }
   if (msgErr) throw new Error(msgErr.message);
 
   const interactionType = msg.channel === 'email' ? 'email' : 'message';
@@ -131,6 +209,7 @@ export async function sendDraft(formData: FormData): Promise<void> {
     ai_generated: msg.body === msg.original_body,
     outcome: 'sent',
     performed_at: now,
+    metadata: { message_id: id, sent_to: to },
   });
 
   const nextStage = msg.approach_type === 'nurture' ? 'nurturing' : 'contacted';
@@ -150,46 +229,111 @@ export async function sendDraft(formData: FormData): Promise<void> {
 
   revalidatePath('/drafts');
   revalidatePath('/nurture');
+  revalidatePath('/pipeline');
+  revalidatePath('/');
+  return { to };
+}
+
+/** Envío de email desde la card (client): devuelve el destinatario usado o el error. */
+export async function sendDraft(formData: FormData): Promise<SendResult> {
+  try {
+    const { to } = await performSend(formData);
+    return { ok: true, to };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Canales manuales (LinkedIn, WhatsApp, IG...): marca como enviado. */
+export async function markSentDraft(formData: FormData): Promise<void> {
+  await performSend(formData);
+}
+
+/**
+ * Deshace un envío: status=draft, sent_at=null, sent_to=null y borra la
+ * interaction outcome=sent de ese mensaje. No toca el stage de la company.
+ */
+export async function revertToDraft(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') ?? '');
+  if (!id) throw new Error('missing id');
+
+  const db = createAdminClient();
+  const { data, error: loadErr } = await db
+    .from('messages')
+    .select('id, contact_id, status, sent_at')
+    .eq('id', id)
+    .single();
+  if (loadErr || !data) throw new Error(`Message ${id} no existe`);
+  const msg = data as unknown as {
+    id: string;
+    contact_id: string;
+    status: string;
+    sent_at: string | null;
+  };
+  if (msg.status !== 'sent') throw new Error(`status=${msg.status} no permite volver a borrador`);
+
+  let { error } = await db
+    .from('messages')
+    .update({ status: 'draft', sent_at: null, sent_to: null })
+    .eq('id', id);
+  if (isMissingSentToColumn(error)) {
+    ({ error } = await db.from('messages').update({ status: 'draft', sent_at: null }).eq('id', id));
+  }
+  if (error) throw new Error(error.message);
+
+  // Interactions nuevas traen metadata.message_id; las previas a este cambio se
+  // matchean por contacto + outcome=sent + performed_at == sent_at.
+  const { error: delErr } = await db
+    .from('interactions')
+    .delete()
+    .eq('outcome', 'sent')
+    .eq('metadata->>message_id', id);
+  if (delErr) throw new Error(`borrar interaction: ${delErr.message}`);
+  if (msg.sent_at) {
+    await db
+      .from('interactions')
+      .delete()
+      .eq('outcome', 'sent')
+      .eq('contact_id', msg.contact_id)
+      .eq('performed_at', msg.sent_at);
+  }
+
+  revalidatePath('/drafts');
+  revalidatePath('/nurture');
   revalidatePath('/');
 }
 
-/** Edita el asunto de un draft de email sin cambiar su status. */
-export async function updateSubject(formData: FormData): Promise<void> {
+/**
+ * Guarda "Para:", asunto y cuerpo de un draft de email sin enviarlo.
+ * Con `approve=1` además lo pasa a approved.
+ */
+export async function saveEmailDraft(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
-  const subject = String(formData.get('subject') ?? '').trim();
   if (!id) throw new Error('missing id');
-  if (!subject) throw new Error('asunto vacío');
+  const to = normalizeEmail(formData.get('to'));
+  const subject = String(formData.get('subject') ?? '')
+    .trim()
+    .slice(0, 200);
+  const body = String(formData.get('body') ?? '').trim();
+  const approve = formData.get('approve') === '1';
 
   const msg = await loadMessage(id);
   assertStatus(msg, ['draft', 'approved']);
-  if (msg.channel !== 'email') throw new Error('solo los emails tienen asunto');
+  if (msg.channel !== 'email') throw new Error('solo para drafts de email');
+  if (to && (!EMAIL_RE.test(to) || to.length > 254)) throw new Error(`Email inválido: ${to}`);
+  if (!subject) throw new Error('asunto vacío');
+  if (!body) throw new Error('cuerpo vacío');
 
   const db = createAdminClient();
-  const { error } = await db
-    .from('messages')
-    .update({ subject: subject.slice(0, 200) })
-    .eq('id', id);
+  if (to) await saveContactEmailIfChanged(db, msg.contact_id, to);
+
+  const update: Record<string, unknown> = { subject, body };
+  if (approve) update.status = 'approved';
+  const { error } = await db.from('messages').update(update).eq('id', id);
   if (error) throw new Error(error.message);
+
   revalidatePath('/drafts');
-}
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-/** Carga/corrige a mano el email del contacto de un draft de email. */
-export async function updateContactEmail(formData: FormData): Promise<void> {
-  const contactId = String(formData.get('contactId') ?? '');
-  const email = String(formData.get('email') ?? '')
-    .trim()
-    .toLowerCase();
-  if (!contactId) throw new Error('missing contactId');
-  if (!EMAIL_RE.test(email) || email.length > 254) throw new Error(`Email inválido: ${email}`);
-
-  const db = createAdminClient();
-  const { error } = await db
-    .from('contacts')
-    .update({ email, contact_source: 'manual' })
-    .eq('id', contactId);
-  if (error) throw new Error(error.message);
-  revalidatePath('/drafts');
+  revalidatePath('/nurture');
   revalidatePath('/pipeline');
+  revalidatePath('/');
 }
