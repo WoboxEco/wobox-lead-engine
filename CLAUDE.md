@@ -112,6 +112,8 @@ pnpm lint                          # Biome
 
 | Endpoint | Qué hace |
 |----------|----------|
+| `POST /api/generate-messages` | Sin `ids`: planifica (companies a redactar + skips). Con `ids` (máx 3): genera esos drafts. Lo llama `prospect-bar.tsx` en loop. |
+| `POST /api/reveal-emails` | Auto-reveal Apollo (máx 10). `retryNoEmail` reintenta los "sin email (intento previo)" (gasta créditos). |
 | `POST /api/unlock-contact` | Busca el person ID en Apollo por `orgId` + nombre, luego revela email con `matchPerson`. Gasta 1 crédito Apollo. |
 
 ## Convenciones
@@ -152,7 +154,8 @@ CALENDLY_SIGNING_KEY                                           edge function
 ### Notas de arquitectura del dashboard (Vercel Hobby)
 
 - Las skills (`@wobox/skills`, `@wobox/prompts`, `@wobox/integrations`) están en `transpilePackages` y declaradas como `dependencies` de `apps/web` para que Next.js las bundlee correctamente.
-- Los archivos `.md` de prompts se incluyen vía `outputFileTracingIncludes` en `next.config.ts`.
+- Los prompts `.md` van **embebidos en el bundle** (`packages/prompts/src/bundled.generated.ts`, generado por `pnpm prompts:bundle` y antes de cada `next build`). `loadPrompt` lee el `.md` del disco si existe (CLI) y si no usa el bundle (Vercel). Después de editar un prompt: `pnpm prompts:bundle` y commitear (el test `bundled.test.ts` falla si quedó desactualizado).
+- "Generar mensajes" corre en el cliente en loop contra `POST /api/generate-messages` (plan + lotes de 2 companies) para no pasar el timeout; los fallos se agrupan por motivo en el resumen y quedan en `error_logs` (skill `generate-messages`, context con approach/promptName/stage).
 - Las server actions que llaman APIs externas (Apollo) usan **API routes** (`/api/*`) en lugar de server actions para evitar el timeout de 10s de Vercel Hobby. Las llamadas a Apollo usan `retries: 0` en `apolloFetch` para no acumular tiempo con reintentos.
 
 ## Pendientes opcionales

@@ -1,19 +1,38 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUNDLED_PROMPTS } from './bundled.generated.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_ROOT = resolve(__dirname, '..');
 
 export type PromptCategory = 'scoring' | 'messages';
 
+/**
+ * Texto crudo del prompt. Lee el .md del disco (así editar un prompt se ve al toque en la
+ * CLI) y si no está cae al bundle embebido en el código (`bundled.generated.ts`).
+ * En Vercel el path de disco es el de build (/vercel/path0/...) y no existe en runtime:
+ * sin el bundle `loadPrompt` tiraba ENOENT y fallaban todos los drafts.
+ */
+export async function readPromptSource(category: PromptCategory, name: string): Promise<string> {
+  const path = resolve(PROMPTS_ROOT, category, `${name}.md`);
+  try {
+    return await readFile(path, 'utf-8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw err;
+  }
+  const bundled = BUNDLED_PROMPTS[`${category}/${name}`];
+  if (bundled === undefined) throw new Error(`Prompt not found: ${category}/${name}`);
+  return bundled;
+}
+
 export async function loadPrompt(
   category: PromptCategory,
   name: string,
   vars: Record<string, string | number | null | undefined> = {},
 ): Promise<string> {
-  const path = resolve(PROMPTS_ROOT, category, `${name}.md`);
-  const raw = await readFile(path, 'utf-8');
+  const raw = await readPromptSource(category, name);
 
   const rendered = raw.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
     const value = vars[key];
@@ -50,8 +69,7 @@ export async function loadPromptSplit(
   variableKey: string,
   variableValue: string,
 ): Promise<{ stable: string; variable: string }> {
-  const path = resolve(PROMPTS_ROOT, category, `${name}.md`);
-  const raw = await readFile(path, 'utf-8');
+  const raw = await readPromptSource(category, name);
 
   // Hidrata todas excepto variableKey.
   const hydrated = raw.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {

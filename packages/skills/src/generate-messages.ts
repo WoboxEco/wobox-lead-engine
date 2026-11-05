@@ -10,6 +10,10 @@ import {
 import { claude } from '@wobox/integrations';
 import { loadPrompt } from '@wobox/prompts';
 import { hasEmail, selectContact } from './contact-selection.js';
+import { type GenerateFailure, formatFailures } from './summary.js';
+
+export { formatFailures };
+export type { GenerateFailure };
 
 // Default: Sonnet. La generacion de mensajes depende de voz argentina + creatividad
 // + adaptacion por BP/canal. Override con --model=haiku solo para pruebas de volumen.
@@ -34,6 +38,10 @@ export interface GenerateMessagesOptions {
   model?: string;
   /** Con channel=email: saltea (no genera draft) a los contactos sin email. */
   requireEmail?: boolean;
+  /** Batch: restringe a estas companies (el dashboard procesa de a 2-3 por request). */
+  ids?: string[];
+  /** Batch: no genera nada, solo devuelve en `pending` las companies a generar. */
+  planOnly?: boolean;
 }
 
 export interface GenerateMessagesResult {
@@ -44,6 +52,20 @@ export interface GenerateMessagesResult {
   noEmail: number;
   /** Subconjunto de skipped: company sin contactos */
   noContacts: number;
+  /** Detalle de cada fallo (también queda en error_logs). */
+  failures: GenerateFailure[];
+  /** Con planOnly: IDs de las companies que se generarían. */
+  pending?: string[];
+}
+
+function emptyResult(): GenerateMessagesResult {
+  return { ok: 0, skipped: 0, failed: 0, noEmail: 0, noContacts: 0, failures: [] };
+}
+
+/** Motivo legible y agrupable de un fallo de generación. */
+export function failureReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.replace(/\s+/g, ' ').trim().slice(0, 200) || 'error desconocido';
 }
 
 const COMPANY_SELECT =
@@ -91,23 +113,19 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
     if (!company) throw new Error(`Company ${opts.id} not found`);
     if (requireEmail && !hasEmail(pickContact(company, channel, opts.contactId))) {
       console.log(`  [skip] ${company.name}: ningún contacto con email`);
-      return { ok: 0, skipped: 1, failed: 0, noEmail: 1, noContacts: 0 };
+      return { ...emptyResult(), skipped: 1, noEmail: 1 };
     }
+    const ctx: GenerateContext = { channel, step };
     try {
       const previous = opts.force ? await pendingDraftIds(db, company.id, channel) : [];
-      const newId = await generateForCompany({ db, log, company, model, channel, step, opts });
+      const newId = await generateForCompany({ db, log, company, model, channel, step, opts, ctx });
       await discardDrafts(db, previous, newId);
     } catch (err) {
-      await writeErrorLog(db, {
-        skill: 'generate-messages',
-        error: err,
-        companyId: company.id,
-        context: { channel, step },
-      });
+      await logFailure(db, company, err, { ...ctx, venture: company.venture, model });
       throw err;
     }
     console.log(`Draft generado para ${company.name}`);
-    return { ok: 1, skipped: 0, failed: 0, noEmail: 0, noContacts: 0 };
+    return { ...emptyResult(), ok: 1 };
   }
 
   // Modo batch
@@ -115,6 +133,10 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
   const limit = opts.limit ? Number.parseInt(opts.limit, 10) : 50;
   let q = db.from('companies').select(COMPANY_SELECT).eq('stage', stage).limit(limit);
   if (opts.venture) q = q.eq('venture', opts.venture);
+  if (opts.ids) {
+    if (opts.ids.length === 0) return emptyResult();
+    q = q.in('id', opts.ids);
+  }
   const { data, error } = await q;
   if (error) throw new Error(`fetch companies: ${error.message}`);
   const companies = (data as unknown as CompanyRow[]) ?? [];
@@ -123,7 +145,7 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
     console.log(
       `No hay companies en stage=${stage}${opts.venture ? ` venture=${opts.venture}` : ''}.`,
     );
-    return { ok: 0, skipped: 0, failed: 0, noEmail: 0, noContacts: 0 };
+    return emptyResult();
   }
 
   // Pre-cargar drafts existentes del canal para no duplicar (salvo --force).
@@ -145,55 +167,89 @@ export async function run(opts: GenerateMessagesOptions): Promise<GenerateMessag
     `\nGenerando mensajes (canal=${channel}, modelo=${model}) para ${companies.length} companies en stage=${stage}...\n`,
   );
 
-  let ok = 0;
-  let skipped = 0;
-  let failed = 0;
-  let noEmail = 0;
-  let noContacts = 0;
+  const result = emptyResult();
+  const pending: CompanyRow[] = [];
 
   for (const company of companies) {
     if (!company.contacts || company.contacts.length === 0) {
-      skipped++;
-      noContacts++;
+      result.skipped++;
+      result.noContacts++;
       console.log(`  [skip] ${company.name}: sin contacts`);
       continue;
     }
     if (haveDraft.has(company.id)) {
-      skipped++;
+      result.skipped++;
       console.log(`  [skip] ${company.name}: ya tiene draft ${channel} (--force para regenerar)`);
       continue;
     }
     if (requireEmail && !hasEmail(pickContact(company, channel, opts.contactId))) {
-      skipped++;
-      noEmail++;
+      result.skipped++;
+      result.noEmail++;
       console.log(`  [skip] ${company.name}: ningún contacto con email`);
       continue;
     }
+    pending.push(company);
+  }
+
+  if (opts.planOnly) {
+    result.pending = pending.map((c) => c.id);
+    return result;
+  }
+
+  for (const company of pending) {
+    const ctx: GenerateContext = { batch: true, channel, step };
     try {
       const previous = opts.force ? await pendingDraftIds(db, company.id, channel) : [];
-      const newId = await generateForCompany({ db, log, company, model, channel, step, opts });
+      const newId = await generateForCompany({ db, log, company, model, channel, step, opts, ctx });
       // Recién con el draft nuevo guardado descartamos los anteriores (si falla, no se pierde nada).
       const discarded = await discardDrafts(db, previous, newId);
-      ok++;
+      result.ok++;
       if (discarded > 0)
         console.log(`  [ok]   ${company.name} (descartados ${discarded} drafts previos)`);
       else console.log(`  [ok]   ${company.name}`);
     } catch (err) {
-      failed++;
-      console.log(`  [FAIL] ${company.name}: ${err instanceof Error ? err.message : String(err)}`);
-      await writeErrorLog(db, {
-        skill: 'generate-messages',
-        error: err,
-        companyId: company.id,
-        context: { batch: true, channel },
-      });
+      result.failed++;
+      const reason = failureReason(err);
+      result.failures.push({ companyId: company.id, company: company.name, reason });
+      console.log(`  [FAIL] ${company.name}: ${reason}`);
+      await logFailure(db, company, err, { ...ctx, venture: company.venture, model });
     }
   }
 
   console.log(
-    `\ngenerate-messages done: ok=${ok} skipped=${skipped} failed=${failed}${requireEmail ? ` sin_email=${noEmail}` : ''}`,
+    `\ngenerate-messages done: ok=${result.ok} skipped=${result.skipped} failed=${result.failed}${requireEmail ? ` sin_email=${result.noEmail}` : ''}`,
   );
-  return { ok, skipped, failed, noEmail, noContacts };
+  if (result.failures.length > 0) console.log(formatFailures(result.failures));
+  return result;
+}
+
+/** Contexto que se va completando durante la generación, para error_logs. */
+type GenerateContext = {
+  batch?: boolean;
+  channel: Channel;
+  step: number;
+  approach?: ApproachType;
+  promptName?: string;
+  contactId?: string;
+  stage?: 'contact' | 'prompt' | 'claude' | 'insert';
+};
+
+async function logFailure(
+  db: DbClient,
+  company: CompanyRow,
+  err: unknown,
+  context: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await writeErrorLog(db, {
+      skill: 'generate-messages',
+      error: err,
+      companyId: company.id,
+      context: { ...context, company: company.name },
+    });
+  } catch (logErr) {
+    console.warn(`[generate-messages] no se pudo escribir error_logs: ${String(logErr)}`);
+  }
 }
 
 /** IDs de drafts pendientes (status=draft) de una company para un canal. */
@@ -239,17 +295,20 @@ async function generateForCompany(args: {
   channel: Channel;
   step: number;
   opts: GenerateMessagesOptions;
+  /** Se completa a medida que avanza (approach, prompt, etapa) para loguear fallos. */
+  ctx?: GenerateContext;
 }): Promise<string> {
   const { db, log, company, model, channel, opts } = args;
+  const ctx: Partial<GenerateContext> = args.ctx ?? {};
+  ctx.stage = 'contact';
 
   // Email: el contacto con email (DM con email > cualquiera con email) para que el draft
   // quede con un contact_id que /drafts pueda mostrar en "Para:" y enviar.
   const contact = pickContact(company, channel, opts.contactId);
   if (!contact) {
-    throw new Error(
-      `${company.name} no tiene contacts (insertar uno, idealmente con is_decision_maker=true)`,
-    );
+    throw new Error('sin contacts (insertar uno, idealmente con is_decision_maker=true)');
   }
+  ctx.contactId = contact.id;
 
   const latestScore = company.scores
     .slice()
@@ -274,12 +333,18 @@ async function generateForCompany(args: {
     ...(latestScore ? { score: latestScore } : {}),
   });
 
+  ctx.approach = approach;
+  ctx.step = step;
+  ctx.promptName = promptName;
+
   log.info(
     { model, approach, channel, step, promptName, company: company.name },
     'generating message',
   );
 
+  ctx.stage = 'prompt';
   const prompt = await loadPrompt('messages', promptName, vars);
+  ctx.stage = 'claude';
   const system = buildSystemPrompt(company.venture, approach, channel, step);
   const rawOutput = await claude.completeText({
     system,
@@ -291,6 +356,9 @@ async function generateForCompany(args: {
   });
 
   const { subject, body } = parseOutput(rawOutput, channel);
+  if (!body.trim()) throw new Error('Claude devolvió un mensaje vacío');
+
+  ctx.stage = 'insert';
 
   const { data: inserted, error: insertErr } = await db
     .from('messages')

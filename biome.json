@@ -13,6 +13,7 @@
       "**/.next",
       "**/build",
       "**/database.types.ts",
+      "**/*.generated.ts",
       "**/*.md"
     ]
   },
