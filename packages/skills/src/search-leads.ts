@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   type DbClient,
   createAdminClient,
@@ -6,6 +7,7 @@ import {
   writeErrorLog,
 } from '@wobox/core';
 import { apollo } from '@wobox/integrations';
+import type { SearchLeadsResult } from './prospect-summary.js';
 
 // Default: Haiku. Mantenido por parity con otras skills aunque hoy no se usa Claude aca.
 export const DEFAULT_MODEL = 'haiku';
@@ -33,6 +35,10 @@ export interface SearchLeadsOptions {
    * ropa | calzado | muebles_deco | todos (default: todos = ICP completo).
    */
   subsector?: string;
+  /** Máximo de páginas a pedir si las anteriores no traen nuevos (default MAX_PAGES_PER_RUN). */
+  maxPages?: number;
+  /** Dashboard: no pedir otra página si ya pasó este tiempo (ms) desde el arranque. */
+  timeBudgetMs?: number;
 }
 
 export const FASHION_SUBSECTORS = ['ropa', 'calzado', 'muebles_deco', 'todos'] as const;
@@ -143,9 +149,18 @@ const DEFAULTS_BY_VENTURE: Record<
   },
 };
 
-export async function run(opts: SearchLeadsOptions): Promise<void> {
+/** Máximo de páginas de Apollo (1 crédito c/u) por corrida si las primeras no traen nuevos. */
+export const MAX_PAGES_PER_RUN = 3;
+
+/** Concurrencia para inserts + búsqueda de decision-makers (Apollo) por org. */
+const ORG_CONCURRENCY = 5;
+
+export type { SearchLeadsResult } from './prospect-summary.js';
+
+export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> {
   const log = createLogger('search-leads');
   const db = createAdminClient();
+  const startedAt = Date.now();
 
   if (!opts.venture) {
     throw new Error('search-leads: --venture es requerido (wobox_food | wobox_fashion | loop)');
@@ -187,6 +202,42 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
   const dryRun = !!opts.dryRun;
+  // En dry-run pedimos una sola página: cada página es 1 crédito real.
+  const maxPages = dryRun ? 1 : Math.max(1, opts.maxPages ?? MAX_PAGES_PER_RUN);
+
+  const filters = buildCursorFilters({
+    venture,
+    subsector: subsector ?? null,
+    industries,
+    keywords,
+    employeeRanges,
+    locations,
+  });
+  const filtersHash = hashFilters(filters);
+
+  const cursor = await readCursor(db, venture, filtersHash, log);
+  const startPage = cursor?.next_page ?? 1;
+  let totalPages: number | null = cursor?.total_pages ?? null;
+
+  const result: SearchLeadsResult = {
+    inserted: 0,
+    duplicates: 0,
+    pagesFetched: 0,
+    page: startPage,
+    totalPages,
+    credits: 0,
+    exhausted: false,
+    contactsAdded: 0,
+    insertedIds: [],
+  };
+
+  if (totalPages !== null && startPage > totalPages) {
+    result.exhausted = true;
+    console.log(
+      `search-leads: agotado para venture=${venture} (página ${startPage} > ${totalPages}). Probá otro rubro o región.`,
+    );
+    return result;
+  }
 
   log.info(
     {
@@ -199,55 +250,12 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
       locations,
       perPage,
       dryRun,
+      filtersHash,
+      startPage,
+      totalPages,
     },
     'apollo searchOrganizations',
   );
-
-  let result: apollo.SearchOrganizationsResult;
-  try {
-    result = await apollo.searchOrganizations({
-      industries,
-      excludeIndustries,
-      locations,
-      employeeRanges,
-      keywords,
-      perPage,
-    });
-  } catch (err) {
-    log.error({ err }, 'apollo searchOrganizations failed');
-    await writeErrorLog(db, {
-      skill: 'search-leads',
-      error: err,
-      context: { venture, industries, employeeRanges, excludeIndustries, locations, perPage },
-    });
-    throw err;
-  }
-
-  // Track creditos: 1 por cada call a search-organizations.
-  // En dry-run la llamada igual se ejecutó (gastó 1 crédito real), pero no la registramos
-  // en api_usage para no ensuciar el tracking de corridas "de verdad".
-  if (!dryRun) {
-    await db.from('api_usage').insert({
-      service: 'apollo',
-      operation: 'search-organizations',
-      credits_used: 1,
-      tokens_used: null,
-      venture,
-    });
-  }
-
-  const orgs = result.organizations;
-  log.info(
-    { returned: orgs.length, totalEntries: result.totalEntries, totalPages: result.totalPages },
-    'apollo returned organizations',
-  );
-
-  if (orgs.length === 0) {
-    console.log(
-      `search-leads: no se encontraron orgs para venture=${venture}. Probar otros filtros.`,
-    );
-    return;
-  }
 
   // Optional campaign upsert (se omite en dry-run para no escribir nada).
   let campaignId: string | null = null;
@@ -255,7 +263,124 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
     campaignId = await upsertCampaign(db, opts.campaign, venture, locations[0] ?? null);
   }
 
-  // Dedup contra companies existentes de la misma venture.
+  const seen = await loadSeenKeys(db, venture);
+
+  let page = startPage;
+  while (result.pagesFetched < maxPages) {
+    // Presupuesto de tiempo (dashboard): no arrancar otra página si ya no entra.
+    if (
+      result.pagesFetched > 0 &&
+      opts.timeBudgetMs !== undefined &&
+      Date.now() - startedAt > opts.timeBudgetMs
+    ) {
+      log.info({ elapsedMs: Date.now() - startedAt }, 'time budget reached, stop paginating');
+      break;
+    }
+
+    let res: apollo.SearchOrganizationsResult;
+    try {
+      res = await apollo.searchOrganizations({
+        industries,
+        excludeIndustries,
+        locations,
+        employeeRanges,
+        keywords,
+        page,
+        perPage,
+      });
+    } catch (err) {
+      log.error({ err, page }, 'apollo searchOrganizations failed');
+      await writeErrorLog(db, {
+        skill: 'search-leads',
+        error: err,
+        context: {
+          venture,
+          industries,
+          employeeRanges,
+          excludeIndustries,
+          locations,
+          perPage,
+          page,
+        },
+      });
+      // Si ya pedimos alguna página, guardamos el avance antes de propagar.
+      if (result.pagesFetched > 0 && !dryRun) {
+        await saveCursor(db, venture, filtersHash, filters, page, totalPages, log);
+      }
+      throw err;
+    }
+
+    result.pagesFetched += 1;
+    result.credits += 1;
+    result.page = page;
+    totalPages = res.totalPages;
+    result.totalPages = totalPages;
+
+    // Track creditos: 1 por cada call a search-organizations.
+    // En dry-run la llamada igual se ejecutó (gastó 1 crédito real), pero no la registramos
+    // en api_usage para no ensuciar el tracking de corridas "de verdad".
+    if (!dryRun) {
+      await db.from('api_usage').insert({
+        service: 'apollo',
+        operation: 'search-organizations',
+        credits_used: 1,
+        tokens_used: null,
+        venture,
+      });
+    }
+
+    const orgs = res.organizations;
+    log.info(
+      { page, returned: orgs.length, totalEntries: res.totalEntries, totalPages },
+      'apollo returned organizations',
+    );
+
+    const pageStats = await processOrgs(db, orgs, {
+      venture,
+      campaignId,
+      dryRun,
+      seen,
+      log,
+    });
+    result.inserted += pageStats.inserted;
+    result.duplicates += pageStats.duplicates;
+    result.contactsAdded += pageStats.contactsAdded;
+    result.insertedIds.push(...pageStats.insertedIds);
+
+    page += 1;
+    if (orgs.length === 0 || page > totalPages) {
+      result.exhausted = true;
+      break;
+    }
+    if (pageStats.inserted > 0) break;
+  }
+
+  if (!dryRun) {
+    await saveCursor(db, venture, filtersHash, filters, page, totalPages, log);
+  }
+
+  const pageText = `página ${result.page}${totalPages ? ` de ${totalPages}` : ''}`;
+  if (dryRun) {
+    console.log(
+      `\nsearch-leads [DRY]: ${pageText} nuevos=${result.inserted} duplicates=${result.duplicates} (no se insertó nada, no se buscaron decision-makers, no se avanzó el cursor).`,
+    );
+    console.log(
+      `Nota: la búsqueda de organizaciones en Apollo consumió ${result.credits} crédito(s) real(es) (no trackeado).`,
+    );
+    return result;
+  }
+
+  // Solo contamos search-organizations; searchDecisionMakers no esta tracked.
+  console.log(
+    `search-leads done: ${pageText} pages=${result.pagesFetched} inserted=${result.inserted} duplicates=${result.duplicates} contacts=${result.contactsAdded} credits=${result.credits}${result.exhausted ? ' (agotado: probá otro rubro o región)' : ''}`,
+  );
+  return result;
+}
+
+type SeenKeys = { website: Set<string>; linkedin: Set<string>; name: Set<string> };
+
+/** Dedup contra companies existentes de la misma venture. */
+async function loadSeenKeys(db: DbClient, venture: SearchLeadsVenture): Promise<SeenKeys> {
   // Paginado con .range(): un select plano se corta en 1000 filas y perderia dedup.
   const existing = await fetchAllRows<Record<string, unknown>>((from, to) =>
     db
@@ -266,51 +391,69 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
       .range(from, to),
   );
 
-  const seenWebsite = new Set<string>();
-  const seenLinkedin = new Set<string>();
-  const seenNameVenture = new Set<string>();
+  const seen: SeenKeys = { website: new Set(), linkedin: new Set(), name: new Set() };
   for (const c of existing) {
     const wn = (c.website_normalized as string | null) ?? '';
-    if (wn) seenWebsite.add(wn);
+    if (wn) seen.website.add(wn);
     const li = (c.linkedin_url as string | null) ?? '';
-    if (li) seenLinkedin.add(li.toLowerCase());
+    if (li) seen.linkedin.add(li.toLowerCase());
     const name = String(c.name ?? '')
       .toLowerCase()
       .trim();
-    if (name) seenNameVenture.add(name);
+    if (name) seen.name.add(name);
   }
+  return seen;
+}
 
-  let inserted = 0;
+async function processOrgs(
+  db: DbClient,
+  orgs: apollo.ApolloOrganization[],
+  ctx: {
+    venture: SearchLeadsVenture;
+    campaignId: string | null;
+    dryRun: boolean;
+    seen: SeenKeys;
+    log: ReturnType<typeof createLogger>;
+  },
+): Promise<{ inserted: number; duplicates: number; contactsAdded: number; insertedIds: string[] }> {
+  const { venture, campaignId, dryRun, seen, log } = ctx;
   let duplicates = 0;
-  let contactsAdded = 0;
+  const fresh: apollo.ApolloOrganization[] = [];
 
+  // Dedup sincrónico (también dentro de la misma página) antes de cualquier insert.
   for (const org of orgs) {
     const websiteNorm = org.website_url ? normalizeWebsite(org.website_url) : '';
     const linkedinKey = (org.linkedin_url ?? '').toLowerCase();
     const nameKey = (org.name ?? '').toLowerCase().trim();
 
     const isDup =
-      (websiteNorm && seenWebsite.has(websiteNorm)) ||
-      (linkedinKey && seenLinkedin.has(linkedinKey)) ||
-      (nameKey && seenNameVenture.has(nameKey));
+      (websiteNorm && seen.website.has(websiteNorm)) ||
+      (linkedinKey && seen.linkedin.has(linkedinKey)) ||
+      (nameKey && seen.name.has(nameKey));
 
     if (isDup) {
       duplicates += 1;
       continue;
     }
 
-    if (websiteNorm) seenWebsite.add(websiteNorm);
-    if (linkedinKey) seenLinkedin.add(linkedinKey);
-    if (nameKey) seenNameVenture.add(nameKey);
+    if (websiteNorm) seen.website.add(websiteNorm);
+    if (linkedinKey) seen.linkedin.add(linkedinKey);
+    if (nameKey) seen.name.add(nameKey);
+    fresh.push(org);
+  }
 
-    const region = buildRegion(org);
-
-    if (dryRun) {
-      console.log(`[DRY] ${org.name} | ${region ?? '-'} | ${org.website_url ?? '-'}`);
-      inserted += 1; // contamos como "se insertaría"
-      continue;
+  if (dryRun) {
+    for (const org of fresh) {
+      console.log(`[DRY] ${org.name} | ${buildRegion(org) ?? '-'} | ${org.website_url ?? '-'}`);
     }
+    // contamos como "se insertaría"
+    return { inserted: fresh.length, duplicates, contactsAdded: 0, insertedIds: [] };
+  }
 
+  const insertedIds: string[] = [];
+  let contactsAdded = 0;
+
+  await mapLimit(fresh, ORG_CONCURRENCY, async (org) => {
     const { data: companyRow, error: insertErr } = await db
       .from('companies')
       .insert({
@@ -318,7 +461,7 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
         venture,
         website: org.website_url ?? null,
         linkedin_url: org.linkedin_url ?? null,
-        region,
+        region: buildRegion(org),
         source: 'apollo',
         stage: 'new',
         apollo_id: org.id,
@@ -329,12 +472,12 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
 
     if (insertErr) {
       log.warn({ err: insertErr.message, name: org.name }, 'insert company failed');
-      continue;
+      return;
     }
 
-    inserted += 1;
     const companyId = (companyRow as { id: string } | null)?.id;
-    if (!companyId) continue;
+    if (!companyId) return;
+    insertedIds.push(companyId);
 
     // Decision makers (Apollo teaser, no revelamos email para no quemar creditos).
     try {
@@ -361,22 +504,105 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
       // No queremos romper toda la corrida si un org no tiene DMs visibles.
       log.warn({ err: String(err), company: org.name }, 'searchDecisionMakers failed');
     }
-  }
+  });
 
-  if (dryRun) {
-    console.log(
-      `\nsearch-leads [DRY]: total=${orgs.length} nuevos=${inserted} duplicates=${duplicates} (no se insertó nada, no se buscaron decision-makers).`,
-    );
-    console.log(
-      'Nota: la búsqueda de organizaciones en Apollo consumió 1 crédito real (no trackeado).',
-    );
-    return;
-  }
+  return { inserted: insertedIds.length, duplicates, contactsAdded, insertedIds };
+}
 
-  const creditsUsed = 1; // solo contamos la search-organizations; searchDecisionMakers no esta tracked.
-  console.log(
-    `search-leads done: total=${orgs.length} inserted=${inserted} duplicates=${duplicates} contacts=${contactsAdded} credits=${creditsUsed}`,
+/** Filtros efectivos que identifican un cursor (normalizados: orden de arrays y mayúsculas no importan). */
+export interface CursorFilters {
+  venture: string;
+  subsector: string | null;
+  industries: string[];
+  keywords: string;
+  employeeRanges: string[];
+  locations: string[];
+}
+
+export function buildCursorFilters(f: CursorFilters): CursorFilters {
+  const norm = (xs: string[]) => [...new Set(xs.map((x) => x.trim().toLowerCase()))].sort();
+  return {
+    venture: f.venture,
+    subsector: f.subsector && f.subsector !== 'todos' ? f.subsector : null,
+    industries: norm(f.industries),
+    keywords: f.keywords.trim().toLowerCase().replace(/\s+/g, ' '),
+    employeeRanges: norm(f.employeeRanges),
+    locations: norm(f.locations),
+  };
+}
+
+export function hashFilters(filters: CursorFilters): string {
+  // Orden de keys fijo (el de la interfaz) para que el hash sea estable.
+  const canonical = JSON.stringify([
+    filters.venture,
+    filters.subsector,
+    filters.industries,
+    filters.keywords,
+    filters.employeeRanges,
+    filters.locations,
+  ]);
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+async function readCursor(
+  db: DbClient,
+  venture: SearchLeadsVenture,
+  filtersHash: string,
+  log: ReturnType<typeof createLogger>,
+): Promise<{ next_page: number; total_pages: number | null } | null> {
+  const { data, error } = await db
+    .from('sourcing_cursors')
+    .select('next_page, total_pages')
+    .eq('venture', venture)
+    .eq('filters_hash', filtersHash)
+    .maybeSingle();
+  if (error) {
+    // Ej: migration 0010 sin aplicar. Seguimos desde la página 1 (comportamiento viejo).
+    log.warn({ err: error.message }, 'read sourcing_cursors failed, starting at page 1');
+    return null;
+  }
+  if (!data) return null;
+  const row = data as { next_page: number | null; total_pages: number | null };
+  return { next_page: Math.max(1, row.next_page ?? 1), total_pages: row.total_pages };
+}
+
+async function saveCursor(
+  db: DbClient,
+  venture: SearchLeadsVenture,
+  filtersHash: string,
+  filters: CursorFilters,
+  nextPage: number,
+  totalPages: number | null,
+  log: ReturnType<typeof createLogger>,
+): Promise<void> {
+  const { error } = await db.from('sourcing_cursors').upsert(
+    {
+      venture,
+      filters_hash: filtersHash,
+      filters,
+      next_page: nextPage,
+      total_pages: totalPages,
+      updated_at: new Date().toISOString(),
+    } as never,
+    { onConflict: 'venture,filters_hash' },
   );
+  if (error) log.warn({ err: error.message }, 'save sourcing_cursors failed');
+}
+
+async function mapLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next] as T;
+      next += 1;
+      await fn(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function parseCsv(input?: string): string[] | null {

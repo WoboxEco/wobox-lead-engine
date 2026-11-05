@@ -22,6 +22,7 @@ export interface Database {
       campaigns: GenericTable;
       error_logs: GenericTable;
       api_usage: GenericTable;
+      sourcing_cursors: GenericTable;
     };
     Views: Record<string, { Row: Record<string, unknown>; Relationships: [] }>;
     Functions: Record<string, { Args: Record<string, unknown>; Returns: unknown }>;

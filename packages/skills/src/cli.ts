@@ -48,7 +48,9 @@ program
     'Stages a scorear (CSV). Default: new,enriched. Para rescorear: new,enriched,qualified',
   )
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: haiku)')
-  .action(scoreLeads.run);
+  .action(async (opts) => {
+    await scoreLeads.run(opts);
+  });
 
 program
   .command('search-leads')
@@ -73,7 +75,9 @@ program
     '--dry-run',
     'Preview: no inserta ni busca decision-makers (la search igual gasta 1 credito Apollo)',
   )
-  .action(searchLeads.run);
+  .action(async (opts) => {
+    await searchLeads.run(opts);
+  });
 program
   .command('search-leads-web')
   .description('Apify Google Maps search para Loop locales (default: haiku)')
