@@ -1,4 +1,4 @@
-import { createAdminClient } from '@wobox/core';
+import { createAdminClient, fetchAllRows } from '@wobox/core';
 import { CheckCircle2, Megaphone, Pause, Play, XCircle } from 'lucide-react';
 import { createCampaign, setCampaignStatus } from './actions';
 
@@ -40,12 +40,15 @@ export default async function CampaignsPage() {
 
   const rows = (campaigns as unknown as Campaign[]) ?? [];
 
-  const { data: companies } = await db
-    .from('companies')
-    .select('campaign_id, stage')
-    .not('campaign_id', 'is', null);
-
-  const companyRows = (companies as unknown as Array<{ campaign_id: string; stage: string }>) ?? [];
+  // Paginado con .range(): un select plano se corta en 1000 filas y subcontaba.
+  const companyRows = await fetchAllRows<{ campaign_id: string; stage: string }>((from, to) =>
+    db
+      .from('companies')
+      .select('campaign_id, stage')
+      .not('campaign_id', 'is', null)
+      .order('id')
+      .range(from, to),
+  );
   const countsByCampaign = new Map<string, { total: number; qualified: number; booked: number }>();
   for (const c of companyRows) {
     const entry = countsByCampaign.get(c.campaign_id) ?? { total: 0, qualified: 0, booked: 0 };

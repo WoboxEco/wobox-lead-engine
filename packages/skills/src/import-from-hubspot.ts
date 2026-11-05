@@ -3,6 +3,7 @@ import {
   type Venture,
   createAdminClient,
   createLogger,
+  fetchAllRows,
   writeErrorLog,
 } from '@wobox/core';
 import { hubspot } from '@wobox/integrations';
@@ -149,14 +150,17 @@ export async function run(opts: ImportFromHubspotOptions): Promise<void> {
   log.info({ fallbackVenture, stage, limit, dryRun }, 'starting hubspot import');
 
   // Cargar mapeo de hubspot_id existentes para dedup rapido (sin pegarle a Supabase 1 por 1).
-  const { data: existingRows } = await db.from('companies').select('id, hubspot_id, name, venture');
-  const existingByHubspotId = new Map<string, { id: string; name: string; venture: string }>();
-  for (const r of (existingRows as Array<{
+  // Paginado con .range(): un select plano se corta en 1000 filas y perderia dedup.
+  const existingRows = await fetchAllRows<{
     id: string;
     hubspot_id: string | null;
     name: string;
     venture: string;
-  }> | null) ?? []) {
+  }>((from, to) =>
+    db.from('companies').select('id, hubspot_id, name, venture').order('id').range(from, to),
+  );
+  const existingByHubspotId = new Map<string, { id: string; name: string; venture: string }>();
+  for (const r of existingRows) {
     if (r.hubspot_id) {
       existingByHubspotId.set(r.hubspot_id, {
         id: r.id,

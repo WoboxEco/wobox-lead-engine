@@ -1,4 +1,4 @@
-import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
+import { type DbClient, createAdminClient, createLogger, fetchAllRows } from '@wobox/core';
 
 // Precios por millon de tokens (actualizar cuando cambien).
 const CLAUDE_PRICING: Record<string, { input: number; output: number }> = {
@@ -38,10 +38,16 @@ export async function run(opts: ShowMetricsOptions): Promise<void> {
 }
 
 async function funnel(db: DbClient, venture: string | undefined, since: string): Promise<void> {
-  let q = db.from('companies').select('stage, venture').gte('created_at', since);
-  if (venture) q = q.eq('venture', venture);
-  const { data } = await q;
-  const rows = (data as Array<{ stage: string; venture: string }>) ?? [];
+  // fetchAllRows pagina con .range(): un select plano se corta en 1000 filas.
+  const rows = await fetchAllRows<{ stage: string; venture: string }>((from, to) => {
+    const q = db
+      .from('companies')
+      .select('stage, venture')
+      .gte('created_at', since)
+      .order('id')
+      .range(from, to);
+    return venture ? q.eq('venture', venture) : q;
+  });
 
   const byVenture: Record<string, Record<string, number>> = {};
   for (const r of rows) {
@@ -77,14 +83,16 @@ async function byBuyerPersona(
   venture: string | undefined,
   since: string,
 ): Promise<void> {
-  const q = db
-    .from('companies')
-    .select('buyer_persona, stage')
-    .eq('venture', 'loop')
-    .gte('created_at', since);
   if (venture && venture !== 'loop') return; // solo aplica a Loop
-  const { data } = await q;
-  const rows = (data as Array<{ buyer_persona: string | null; stage: string }>) ?? [];
+  const rows = await fetchAllRows<{ buyer_persona: string | null; stage: string }>((from, to) =>
+    db
+      .from('companies')
+      .select('buyer_persona, stage')
+      .eq('venture', 'loop')
+      .gte('created_at', since)
+      .order('id')
+      .range(from, to),
+  );
   if (rows.length === 0) return;
 
   const bp: Record<
@@ -118,13 +126,17 @@ async function messageMetrics(
   venture: string | undefined,
   since: string,
 ): Promise<void> {
-  let q = db
-    .from('messages')
-    .select('status, approach_type, channel, companies!inner(venture)')
-    .gte('created_at', since);
-  if (venture) q = q.eq('companies.venture', venture);
-  const { data } = await q;
-  const rows = (data as Array<{ status: string; approach_type: string; channel: string }>) ?? [];
+  const rows = await fetchAllRows<{ status: string; approach_type: string; channel: string }>(
+    (from, to) => {
+      const q = db
+        .from('messages')
+        .select('status, approach_type, channel, companies!inner(venture)')
+        .gte('created_at', since)
+        .order('id')
+        .range(from, to);
+      return venture ? q.eq('companies.venture', venture) : q;
+    },
+  );
   if (rows.length === 0) return;
 
   const byStatus: Record<string, number> = {};
@@ -149,32 +161,35 @@ async function messageMetrics(
 
 async function flywheel(db: DbClient, venture: string | undefined, since: string): Promise<void> {
   // Tasa de edicion de drafts + interactions conversion.
-  let mq = db
-    .from('messages')
-    .select('body, original_body, status, approach_type, companies!inner(venture)')
-    .gte('created_at', since);
-  if (venture) mq = mq.eq('companies.venture', venture);
-  const { data: msgs } = await mq;
-  const messages =
-    (msgs as Array<{
-      body: string;
-      original_body: string;
-      status: string;
-      approach_type: string;
-    }>) ?? [];
+  const messages = await fetchAllRows<{
+    body: string;
+    original_body: string;
+    status: string;
+    approach_type: string;
+  }>((from, to) => {
+    const q = db
+      .from('messages')
+      .select('body, original_body, status, approach_type, companies!inner(venture)')
+      .gte('created_at', since)
+      .order('id')
+      .range(from, to);
+    return venture ? q.eq('companies.venture', venture) : q;
+  });
   const totalFinalized = messages.filter(
     (m) => m.status === 'sent' || m.status === 'approved' || m.status === 'discarded',
   ).length;
   const edited = messages.filter((m) => m.body !== m.original_body).length;
   const editRate = totalFinalized > 0 ? (edited / totalFinalized) * 100 : 0;
 
-  let iq = db
-    .from('interactions')
-    .select('outcome, type, companies!inner(venture)')
-    .gte('performed_at', since);
-  if (venture) iq = iq.eq('companies.venture', venture);
-  const { data: ints } = await iq;
-  const interactions = (ints as Array<{ outcome: string; type: string }>) ?? [];
+  const interactions = await fetchAllRows<{ outcome: string; type: string }>((from, to) => {
+    const q = db
+      .from('interactions')
+      .select('outcome, type, companies!inner(venture)')
+      .gte('performed_at', since)
+      .order('id')
+      .range(from, to);
+    return venture ? q.eq('companies.venture', venture) : q;
+  });
   const sent = interactions.filter((i) => i.outcome === 'sent').length;
   const replied = interactions.filter((i) => i.outcome === 'replied').length;
   const accepted = interactions.filter((i) => i.outcome === 'accepted').length;
@@ -198,20 +213,21 @@ async function costBreakdown(
   venture: string | undefined,
   since: string,
 ): Promise<void> {
-  let q = db
-    .from('api_usage')
-    .select('service, operation, tokens_used, credits_used, venture')
-    .gte('created_at', since);
-  if (venture) q = q.eq('venture', venture);
-  const { data } = await q;
-  const rows =
-    (data as Array<{
-      service: string;
-      operation: string;
-      tokens_used: number | null;
-      credits_used: number;
-      venture: string | null;
-    }>) ?? [];
+  const rows = await fetchAllRows<{
+    service: string;
+    operation: string;
+    tokens_used: number | null;
+    credits_used: number;
+    venture: string | null;
+  }>((from, to) => {
+    const q = db
+      .from('api_usage')
+      .select('service, operation, tokens_used, credits_used, venture')
+      .gte('created_at', since)
+      .order('id')
+      .range(from, to);
+    return venture ? q.eq('venture', venture) : q;
+  });
   if (rows.length === 0) return;
 
   let claudeCost = 0;

@@ -1,4 +1,10 @@
-import { type DbClient, createAdminClient, createLogger, writeErrorLog } from '@wobox/core';
+import {
+  type DbClient,
+  createAdminClient,
+  createLogger,
+  fetchAllRows,
+  writeErrorLog,
+} from '@wobox/core';
 import { apollo } from '@wobox/integrations';
 
 // Default: Haiku. Mantenido por parity con otras skills aunque hoy no se usa Claude aca.
@@ -250,15 +256,20 @@ export async function run(opts: SearchLeadsOptions): Promise<void> {
   }
 
   // Dedup contra companies existentes de la misma venture.
-  const { data: existing } = await db
-    .from('companies')
-    .select('name, website_normalized, linkedin_url')
-    .eq('venture', venture);
+  // Paginado con .range(): un select plano se corta en 1000 filas y perderia dedup.
+  const existing = await fetchAllRows<Record<string, unknown>>((from, to) =>
+    db
+      .from('companies')
+      .select('name, website_normalized, linkedin_url')
+      .eq('venture', venture)
+      .order('id')
+      .range(from, to),
+  );
 
   const seenWebsite = new Set<string>();
   const seenLinkedin = new Set<string>();
   const seenNameVenture = new Set<string>();
-  for (const c of (existing as Array<Record<string, unknown>>) ?? []) {
+  for (const c of existing) {
     const wn = (c.website_normalized as string | null) ?? '';
     if (wn) seenWebsite.add(wn);
     const li = (c.linkedin_url as string | null) ?? '';
