@@ -1,5 +1,6 @@
 import { type DbClient, createAdminClient, createLogger } from '@wobox/core';
 import { apify } from '@wobox/integrations';
+import { enrichContactChannels } from './scrape-contact-channels.js';
 
 export interface EnrichLeadOptions {
   id?: string;
@@ -8,6 +9,11 @@ export interface EnrichLeadOptions {
   venture?: string;
   force?: boolean;
   noScrape?: boolean;
+  /** commander: --no-scrape => scrape=false */
+  scrape?: boolean;
+  /** commander: --no-maps => maps=false */
+  maps?: boolean;
+  mapsLimit?: number;
 }
 
 type CompanyRow = {
@@ -30,10 +36,32 @@ export async function run(opts: EnrichLeadOptions): Promise<void> {
     return;
   }
 
-  const { resolved, skipped } = await resolveHandles(companies, {
-    scrape: !opts.noScrape,
-    log,
-  });
+  // Canales de contacto (website scrape gratis + Maps si falta telefono). Tambien
+  // completa instagram_handle desde el website, asi que despues no re-scrapeamos.
+  const scrape = !opts.noScrape && opts.scrape !== false;
+  if (scrape) {
+    const channels = await enrichContactChannels(db, {
+      ids: companies.map((c) => c.id),
+      maps: opts.maps !== false,
+      ...(opts.mapsLimit ? { mapsLimit: opts.mapsLimit } : {}),
+      ...(opts.force ? { force: true } : {}),
+    });
+    const byId = new Map(channels.rows.map((r) => [r.id, r.found]));
+    for (const c of companies) {
+      const found = byId.get(c.id);
+      if (!found || Object.keys(found).length === 0) continue;
+      if (found.instagram_handle && !c.instagram_handle)
+        c.instagram_handle = found.instagram_handle;
+      if (found.website && !c.website) c.website = found.website;
+      console.log(`[${c.name}] canales: ${JSON.stringify(found)}`);
+    }
+    console.log(
+      `Canales: ${channels.updated}/${channels.processed} con datos nuevos, ${channels.mapsLookups} busquedas Maps${channels.pendingMaps ? ` (${channels.pendingMaps} pendientes por tope)` : ''}\n`,
+    );
+  }
+
+  // El scrape de IG desde el website ya lo hizo enrichContactChannels.
+  const { resolved, skipped } = await resolveHandles(companies);
   if (resolved.length === 0) {
     console.log(`Sin handles IG resolvibles (${skipped.length} skipped):`);
     for (const s of skipped) console.log(`  - ${s.name}: ${s.reason}`);
@@ -143,7 +171,6 @@ interface SkippedTarget {
 
 async function resolveHandles(
   companies: CompanyRow[],
-  opts: { scrape: boolean; log: ReturnType<typeof createLogger> },
 ): Promise<{ resolved: ResolvedTarget[]; skipped: SkippedTarget[] }> {
   const resolved: ResolvedTarget[] = [];
   const skipped: SkippedTarget[] = [];
@@ -158,20 +185,12 @@ async function resolveHandles(
       handle = apify.normalizeInstagramHandle(c.website);
     }
 
-    // Scrape HTML del website si tenemos dominio real (no IG) y scrape activo.
-    if (
-      !handle &&
-      opts.scrape &&
-      c.website &&
-      !/(instagram|facebook|tiktok|twitter|x|linkedin)\.com/i.test(c.website)
-    ) {
-      handle = await scrapeInstagramFromWebsite(c.website, opts.log);
-    }
-
     if (!handle) {
       skipped.push({
         name: c.name,
-        reason: c.website ? `website sin IG link detectable (${c.website})` : 'sin instagram_handle y sin website',
+        reason: c.website
+          ? `website sin IG link detectable (${c.website})`
+          : 'sin instagram_handle y sin website',
       });
       continue;
     }
@@ -182,68 +201,5 @@ async function resolveHandles(
   return { resolved, skipped };
 }
 
-const SCRAPE_TIMEOUT_MS = 8000;
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-
-async function scrapeInstagramFromWebsite(
-  website: string,
-  log: ReturnType<typeof createLogger>,
-): Promise<string | null> {
-  const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), SCRAPE_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8',
-      },
-    });
-    if (!res.ok) {
-      log.debug({ website, status: res.status }, 'scrape non-2xx');
-      return null;
-    }
-    const html = await res.text();
-    return extractInstagramHandle(html);
-  } catch (err) {
-    log.debug({ website, err: String(err) }, 'scrape failed');
-    return null;
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-// Busca el primer link IG plausible, excluyendo handles genericos de plataforma.
-const IG_HANDLE_BLOCKLIST = new Set([
-  'share',
-  'explore',
-  'reel',
-  'reels',
-  'tv',
-  'p',
-  'direct',
-  'accounts',
-  'developer',
-  'about',
-  'privacy',
-]);
-
-export function extractInstagramHandle(html: string): string | null {
-  const regex = /instagram\.com\/([a-zA-Z0-9._]+)(?:[\/?#"'\s]|$)/g;
-  const seen = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(html)) !== null) {
-    const cand = m[1]?.toLowerCase();
-    if (!cand) continue;
-    if (IG_HANDLE_BLOCKLIST.has(cand)) continue;
-    if (cand.length < 2 || cand.length > 30) continue;
-    if (seen.has(cand)) continue;
-    seen.add(cand);
-    return cand;
-  }
-  return null;
-}
+// Re-export para compatibilidad (tests y consumidores existentes).
+export { extractInstagramHandle } from './scrape-contact-channels.js';

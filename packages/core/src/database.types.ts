@@ -30,3 +30,15 @@ export interface Database {
     CompositeTypes: Record<string, never>;
   };
 }
+
+/**
+ * Columnas de canales de contacto en `companies` (migration 0011_contact_channels).
+ * El placeholder de arriba no tipa columnas; este shape sirve para castear selects
+ * hasta que `pnpm db:types` regenere los tipos reales.
+ */
+export interface CompanyContactChannelsRow {
+  phone: string | null;
+  whatsapp: string | null;
+  generic_email: string | null;
+  enriched_at: string | null;
+}

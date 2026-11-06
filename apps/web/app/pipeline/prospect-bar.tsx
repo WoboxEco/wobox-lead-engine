@@ -6,7 +6,7 @@ import {
   formatProspectSummary,
 } from '@wobox/skills/prospect-summary';
 import { type GenerateFailure, formatGenerateSummary } from '@wobox/skills/summary';
-import { Loader2, Search, Sparkles } from 'lucide-react';
+import { Loader2, Phone, Search, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -42,10 +42,11 @@ const selectClass =
 const labelClass = 'text-[11.5px] text-muted';
 
 export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
-  const [running, setRunning] = useState<'prospect' | 'messages' | null>(null);
+  const [running, setRunning] = useState<'prospect' | 'messages' | 'enrich' | null>(null);
   const [result, setResult] = useState<{ which: 'prospect' | 'messages'; text: string } | null>(
     null,
   );
+  const [enrichText, setEnrichText] = useState<string | null>(null);
 
   const initialVenture = defaultVenture || 'wobox_fashion';
   const [prospectVenture, setProspectVenture] = useState(initialVenture);
@@ -87,7 +88,63 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
     const body: Record<string, unknown> = { venture, limit: prospectLimit };
     if (venture === 'wobox_fashion') body.subsector = subsector;
     if (venture !== 'loop') body.region = region;
-    void run('prospect', () => prospectInSteps({ venture, body, onProgress: setProgress }));
+    setEnrichText(null);
+    void run('prospect', async () => {
+      const text = await prospectInSteps({ venture, body, onProgress: setProgress });
+      // Después del prospect: Google Maps para los que quedaron sin teléfono.
+      if (!text.startsWith('Error')) {
+        await runEnrich(venture);
+      }
+      return text;
+    });
+  }
+
+  /** Llama /api/enrich (scrape website + Google Maps si falta telefono, tope 10). */
+  async function runEnrich(venture: string) {
+    setEnrichText('Buscando teléfonos / WhatsApp / email… (hasta ~1 min)');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 65000);
+    try {
+      const res = await fetch('/api/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venture }),
+        signal: controller.signal,
+      });
+      const data = (await res.json()) as {
+        processed?: number;
+        updated?: number;
+        mapsLookups?: number;
+        pendingMaps?: number;
+        error?: string;
+      };
+      if (!res.ok || data.error) {
+        setEnrichText(`Enriquecer: ${data.error ?? `HTTP ${res.status}`}`);
+      } else {
+        setEnrichText(
+          `Contactos: ${data.updated}/${data.processed} con datos nuevos · ${data.mapsLookups} búsquedas Maps${data.pendingMaps ? ` · ${data.pendingMaps} pendientes (volvé a correr)` : ''}`,
+        );
+        router.refresh();
+      }
+    } catch (err) {
+      setEnrichText(
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Enriquecer: timeout (lo ya encontrado quedó guardado; volvé a correr)'
+          : `Enriquecer: ${String(err)}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function runEnrichOnly() {
+    if (running) return;
+    setResult(null);
+    setRunning('enrich');
+    void runEnrich(prospectVenture).finally(() => {
+      setRunning(null);
+      router.refresh();
+    });
   }
 
   function runMessages() {
@@ -114,8 +171,9 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             <h2 className="text-[14px] font-semibold">Prospectar leads nuevos</h2>
           </div>
           <p className={`${labelClass} mt-1`}>
-            Trae leads nuevos (Apollo o web) y los puntúa con IA. Apollo gasta 1 crédito por página
-            (máx 3 si las primeras solo traen duplicados).
+            Trae leads nuevos (Apollo o web), busca teléfono / WhatsApp / email en su web y los
+            puntúa con IA. Apollo gasta 1 crédito por página (máx 3 si las primeras solo traen
+            duplicados); Google Maps ~1 crédito Apify por lead sin teléfono.
           </p>
         </div>
 
@@ -194,6 +252,20 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
             )}
             + Prospect
           </button>
+          <button
+            type="button"
+            onClick={runEnrichOnly}
+            disabled={busy}
+            title="Scrape del website + Google Maps si falta teléfono (~1 crédito Apify c/u, tope 10)"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium border border-[var(--border)] hover:bg-[var(--surface-elevated)] transition-colors disabled:opacity-50"
+          >
+            {running === 'enrich' ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Phone size={14} />
+            )}
+            Enriquecer contactos
+          </button>
         </div>
 
         {running === 'prospect' ? (
@@ -203,6 +275,9 @@ export function ProspectBar({ defaultVenture }: { defaultVenture: string }) {
         ) : null}
         {result?.which === 'prospect' ? (
           <p className="text-[12.5px] text-muted-strong font-mono break-words">{result.text}</p>
+        ) : null}
+        {enrichText ? (
+          <p className="text-[12.5px] text-muted-strong font-mono break-words">{enrichText}</p>
         ) : null}
       </div>
 
@@ -332,10 +407,11 @@ async function prospectInSteps(args: {
 }): Promise<string> {
   const { venture, body, onProgress } = args;
   onProgress(venture === 'loop' ? 'Buscando leads en la web…' : 'Buscando leads en Apollo…');
-  const src = await postJson<{ search: SearchLeadsResult | null; toScore: string[] }>(
-    '/api/prospect',
-    body,
-  );
+  const src = await postJson<{
+    search: SearchLeadsResult | null;
+    toScore: string[];
+    channels?: { processed: number; updated: number; error?: string } | null;
+  }>('/api/prospect', body);
   if ('error' in src) return `Error en sourcing: ${src.error.slice(0, 200)}`;
 
   const toScore = Array.isArray(src.toScore) ? src.toScore : [];
@@ -360,11 +436,18 @@ async function prospectInSteps(args: {
     ? ` · ${errors.length} lote(s) de scoring fallaron: ${errors[0]?.slice(0, 120)}`
     : '';
 
+  const ch = src.channels;
+  const channelsNote = !ch
+    ? ''
+    : ch.error
+      ? ` · scrape de canales falló: ${ch.error}`
+      : ` · canales: ${ch.updated}/${ch.processed} con datos del website`;
+
   if (!src.search) {
     // Loop (Apify): sin conteo de nuevos/duplicados.
-    return `${scored} puntuados, ${qualified} calificados${scoringNote}`;
+    return `${scored} puntuados, ${qualified} calificados${scoringNote}${channelsNote}`;
   }
-  return `${formatProspectSummary(src.search, errors.length && !scored ? null : qualified)}${scoringNote}`;
+  return `${formatProspectSummary(src.search, errors.length && !scored ? null : qualified)}${scoringNote}${channelsNote}`;
 }
 
 /** Auto-reveal de emails vía API route (fuera de la server action por el timeout de Vercel). */

@@ -2,6 +2,7 @@ import { createAdminClient } from '@wobox/core';
 import { ArrowDown, ArrowUp, AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
 import { changeStage, discardCompany } from './actions';
+import { ChannelLinks } from './channel-links';
 import { UnlockButton } from './unlock-button';
 
 import { ProspectBar } from './prospect-bar';
@@ -61,7 +62,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   let q = db
     .from('companies')
     .select(
-      'id, name, venture, stage, created_at, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, scores(total_score, scored_at), contacts(id, name, role, email, linkedin_url, warm_path, is_decision_maker)',
+      'id, name, venture, stage, created_at, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, phone, whatsapp, generic_email, scores(total_score, scored_at), contacts(id, name, role, email, phone, linkedin_url, warm_path, is_decision_maker)',
     )
     // Con orden por alta ascendente traemos los 200 más viejos; en el resto, los 200 más nuevos.
     .order('created_at', { ascending: sort === 'alta' && dir === 'asc' })
@@ -93,12 +94,16 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     neighborhood: string | null;
     instagram_handle: string | null;
     social_followers: number | null;
+    phone: string | null;
+    whatsapp: string | null;
+    generic_email: string | null;
     scores: Array<{ total_score: number; scored_at: string }>;
     contacts: Array<{
       id: string;
       name: string;
       role: string | null;
       email: string | null;
+      phone: string | null;
       linkedin_url: string | null;
       warm_path: string | null;
       is_decision_maker: boolean | null;
@@ -292,10 +297,14 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                       )}
                     </td>
                     <td className="py-3 px-4 max-w-[220px]">
-                      {r.contacts.length === 0 ? (
-                        <span className="text-muted text-[12px]">-</span>
-                      ) : (
-                        <div className="flex flex-col gap-1">
+                      <ChannelLinks
+                        phone={r.phone ?? r.contacts.find((c) => c.phone)?.phone ?? null}
+                        whatsapp={r.whatsapp}
+                        instagram={r.instagram_handle}
+                        email={r.generic_email}
+                      />
+                      {r.contacts.length === 0 ? null : (
+                        <div className="flex flex-col gap-1 mt-1.5">
                           {r.contacts.map((c) => (
                             <div
                               key={c.id}

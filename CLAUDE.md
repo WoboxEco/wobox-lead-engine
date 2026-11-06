@@ -35,8 +35,8 @@ pnpm skill health-check            # valida env + auth con todas las APIs
 ```
 search-leads-web (Apify Maps + IG)
   ↓ stage=new
-enrich-lead (Apify IG scraper + website HTML scrape)
-  ↓ stage=enriched
+enrich-lead (canales de contacto: website scrape + Maps fallback; Apify IG scraper)
+  ↓ stage=enriched · companies.phone/whatsapp/generic_email/enriched_at
 score-leads (Claude JSON con zod)
   ↓ stage=qualified (≥50) o discarded
 check-warm-path --auto (Apollo)
@@ -81,7 +81,8 @@ pnpm lint                          # Biome
 | `import-csv` | — | Bulk import offline desde CSV |
 | `search-leads-web` | Apify + Claude | Apify Maps + IG por barrio |
 | `search-leads` | Apollo (1 cr/página, máx 3) | Apollo org search por venture (food/fashion) + decision-makers sin email. Retoma desde `sourcing_cursors.next_page` por hash de filtros y avanza si la página solo trae duplicados. `--dry-run` previsualiza 1 página sin insertar ni mover el cursor. wobox_fashion: filtro duro `organization_industry_tag_ids` (IDs resueltos y cacheados en `apollo.resolveIndustryTagIds`), 11–500 empleados y pre-filtro sin IA de rubro (`fashion-icp.ts`) que no inserta ni scorea lo ajeno |
-| `enrich-lead` | Apify | IG followers + website scrape para IG handle |
+| `enrich-lead` | Apify | Canales de contacto (ver `enrich-contacts`) + IG followers. `--no-scrape`, `--no-maps`, `--maps-limit` |
+| `enrich-contacts` | Apify Maps (~1 cr/lugar, tope 10) | Teléfono, WhatsApp, IG y email genérico a nivel company: scrape del website (home + `/contacto` + `/contact`, gratis) y Google Maps solo si falta teléfono |
 | `score-leads` | Claude | Scoring multi-dimensional con zod (wobox_fashion usa `scoring-wobox-fashion-v2`, lookalike de las 17 marcas ideales) |
 | `rescore-discarded` | Claude | Re-puntúa con v2 los wobox_fashion `discarded` con último score 35–49 (`--dry-run`, `--limit`). En /pipeline: botón **Re-puntuar descartados** con filtro Wobox Fashion |
 | `check-warm-path` | Apollo (1 cr en `--auto-reveal`) | `--list`/`--mark` manual o `--auto` con API |
@@ -105,7 +106,7 @@ pnpm lint                          # Biome
 | Ruta | Qué muestra |
 |------|-------------|
 | `/` | Counts por stage + por venture |
-| `/pipeline` | Tabla filtrable (venture/stage/min-score) + server actions para cambiar stage y descartar. Incluye botón **+ Prospect** (sourcing Apollo + scoring), **Generar mensajes**, y columna **Contactos** con botón 🔓 por DM para revelar email vía Apollo (2 pasos: searchDecisionMakers + matchPerson, 1 crédito). |
+| `/pipeline` | Tabla filtrable (venture/stage/min-score) + server actions para cambiar stage y descartar. Incluye botón **+ Prospect** (sourcing Apollo + scrape de canales + scoring, y después `/api/enrich` con Maps), **Enriquecer contactos**, **Generar mensajes**, y columna **Contactos** con íconos-link 📞 / WA / IG / ✉️ (o "—" si falta) más botón 🔓 por DM para revelar email vía Apollo (2 pasos: searchDecisionMakers + matchPerson, 1 crédito). |
 | `/drafts` | Cards de drafts con approve/discard/edit/send inline |
 | `/nurture` | Vista `nurture_today` agrupada por founder |
 
@@ -119,6 +120,14 @@ pnpm lint                          # Biome
 | `POST /api/reveal-emails` | Auto-reveal Apollo (máx 10). `retryNoEmail` reintenta los "sin email (intento previo)" (gasta créditos). |
 | `POST /api/rescore-discarded` | Sin `ids`: lista candidatas (fashion discarded, score 35–49). Con `ids` (máx 2): re-puntúa con v2. |
 | `POST /api/unlock-contact` | Busca el person ID en Apollo por `orgId` + nombre, luego revela email con `matchPerson`. Gasta 1 crédito Apollo. |
+| `POST /api/enrich` | `{ venture?, limit?, maps? }`. Canales de contacto para companies con `enriched_at` null: scrape website + Google Maps si falta teléfono (tope 10/corrida, `maxDuration=60`). Registra Maps en `api_usage`. |
+
+### Canales de contacto (company-level)
+
+- Columnas `companies.phone`, `whatsapp`, `generic_email`, `enriched_at` (migration `0011_contact_channels`). Teléfonos normalizados a E.164 `+54…` (celulares `+549…`).
+- Lógica en [packages/skills/src/scrape-contact-channels.ts](packages/skills/src/scrape-contact-channels.ts): nunca pisa datos existentes. `enriched_at` se setea cuando hay teléfono o ya se intentó Maps; un pase sin Maps sin teléfono lo deja en null para el próximo pase.
+- `+ Prospect` corre solo el scrape (gratis, ~5s) entre sourcing y scoring; el fallback Maps lo dispara el cliente vía `/api/enrich` para no pegarle al timeout de la server action.
+- `generate-messages` resuelve el destino del canal (`resolveChannelTarget`): prefiere el dato del contacto y cae al de la company; si es un canal genérico (info@, WhatsApp del local) el prompt pide que lo deriven a la persona. `deliver.ts` manda email a `contacts.email` o, si falta, a `companies.generic_email`.
 
 ## Convenciones
 

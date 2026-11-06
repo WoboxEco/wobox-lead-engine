@@ -18,7 +18,7 @@ export interface DeliverResult {
 /**
  * Envio real del mensaje. Hoy solo email (Google Workspace SMTP);
  * el resto de canales se mandan a mano y devuelven { delivered: false }.
- * `opts.to` fuerza el destinatario (si no, usa contacts.email).
+ * `opts.to` fuerza el destinatario (si no, usa contacts.email o companies.generic_email).
  * Tira error si no se puede enviar, para que el caller NO marque el mensaje como sent.
  */
 export async function deliverMessage(
@@ -33,19 +33,27 @@ export async function deliverMessage(
   }
 
   // Si el caller pasa `to` explicito (lo que el founder ve en "Para:"), se usa ese.
-  // Si no, se lee el email actual del contacto.
+  // Si no, se lee el email actual del contacto y, si falta, el email genérico de la company.
   let to = (opts.to ?? '').trim();
   if (!to) {
     const { data: contactData, error: contactErr } = await db
       .from('contacts')
-      .select('email')
+      .select('email, companies(generic_email)')
       .eq('id', msg.contact_id)
       .single();
     if (contactErr) throw new Error(`load contact: ${contactErr.message}`);
-    to = ((contactData as { email: string | null } | null)?.email ?? '').trim();
+    to =
+      resolveEmailRecipient(
+        contactData as unknown as {
+          email: string | null;
+          companies: { generic_email: string | null } | null;
+        } | null,
+      ) ?? '';
   }
   if (!to) {
-    throw new Error('El contacto no tiene email. Revelalo con 🔓 en /pipeline');
+    throw new Error(
+      'El contacto no tiene email ni la company email genérico. Revelalo con 🔓 o corré "Enriquecer contactos" en /pipeline',
+    );
   }
 
   const limit = env().EMAIL_DAILY_LIMIT;
@@ -68,4 +76,14 @@ export async function deliverMessage(
     text: msg.body,
   });
   return { delivered: true, to, messageId: res.messageId };
+}
+
+/** Email del decision-maker; si no tiene, el email generico de la company (info@, ventas@...). */
+export function resolveEmailRecipient(
+  row: { email: string | null; companies: { generic_email: string | null } | null } | null,
+): string | null {
+  const personal = row?.email?.trim();
+  if (personal) return personal;
+  const generic = row?.companies?.generic_email?.trim();
+  return generic || null;
 }

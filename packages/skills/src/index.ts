@@ -3,6 +3,8 @@ export * as importFromHubspot from './import-from-hubspot.js';
 export * as searchLeads from './search-leads.js';
 export * as searchLeadsWeb from './search-leads-web.js';
 export * as enrichLead from './enrich-lead.js';
+export * as enrichContacts from './enrich-contacts.js';
+export * as contactChannels from './scrape-contact-channels.js';
 export * as scoreLeads from './score-leads.js';
 export * as rescoreDiscarded from './rescore-discarded.js';
 export * as checkWarmPath from './check-warm-path.js';
