@@ -12,7 +12,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const CATEGORIES = ['messages', 'scoring'];
+const CATEGORIES = ['messages', 'replies', 'scoring'];
 const OUT = join(ROOT, 'src', 'bundled.generated.ts');
 
 export async function renderBundle() {
