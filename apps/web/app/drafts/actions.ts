@@ -16,16 +16,6 @@ type MessageRow = {
   status: string;
 };
 
-const STAGE_ORDER = [
-  'new',
-  'enriched',
-  'qualified',
-  'nurturing',
-  'contacted',
-  'meeting_booked',
-  'discarded',
-];
-
 async function loadMessage(id: string): Promise<MessageRow> {
   const db = createAdminClient();
   const { data, error } = await db
@@ -43,13 +33,6 @@ function assertStatus(msg: MessageRow, allowed: string[]): void {
   if (!allowed.includes(msg.status)) {
     throw new Error(`status=${msg.status} no permite esta accion`);
   }
-}
-
-function isStageDowngrade(current: string, next: string): boolean {
-  const ci = STAGE_ORDER.indexOf(current);
-  const ni = STAGE_ORDER.indexOf(next);
-  if (ci < 0 || ni < 0) return false;
-  return ni < ci;
 }
 
 export async function approveDraft(formData: FormData): Promise<void> {
@@ -111,11 +94,7 @@ function normalizeEmail(raw: unknown): string {
     .toLowerCase();
 }
 
-/** true si el error de PostgREST es porque la columna messages.sent_to no existe (migration 0009 sin aplicar). */
-function isMissingSentToColumn(err: { message?: string; code?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === 'PGRST204' || err.code === '42703' || /sent_to/.test(err.message ?? '');
-}
+const { isMissingSentToColumn } = deliver;
 
 async function saveContactEmailIfChanged(
   db: ReturnType<typeof createAdminClient>,
@@ -179,53 +158,11 @@ async function performSend(formData: FormData): Promise<{ to: string | null }> {
     }
   }
 
-  // 3. Envio real (email via SMTP) al destinatario explícito. Si falla, tira y el draft queda sin marcar.
-  const delivery = await deliver.deliverMessage(db, msg, to ? { to } : {});
-  if (delivery.to) to = delivery.to;
-
-  const now = new Date().toISOString();
-
-  let { error: msgErr } = await db
-    .from('messages')
-    .update({ status: 'sent', sent_at: now, sent_to: to })
-    .eq('id', id);
-  if (isMissingSentToColumn(msgErr)) {
-    // Migration 0009 todavía no aplicada: no perder el estado sent (el mail ya salió).
-    // El destinatario queda igual en interactions.metadata.sent_to.
-    ({ error: msgErr } = await db
-      .from('messages')
-      .update({ status: 'sent', sent_at: now })
-      .eq('id', id));
-  }
-  if (msgErr) throw new Error(msgErr.message);
-
-  const interactionType = msg.channel === 'email' ? 'email' : 'message';
-  await db.from('interactions').insert({
-    contact_id: msg.contact_id,
-    company_id: msg.company_id,
-    type: interactionType,
-    channel: msg.channel,
-    content: msg.body,
-    ai_generated: msg.body === msg.original_body,
-    outcome: 'sent',
-    performed_at: now,
-    metadata: { message_id: id, sent_to: to },
-  });
-
-  const nextStage = msg.approach_type === 'nurture' ? 'nurturing' : 'contacted';
-  const { data: companyData } = await db
-    .from('companies')
-    .select('stage')
-    .eq('id', msg.company_id)
-    .single();
-  const currentStage = (companyData as { stage: string } | null)?.stage;
-
-  if (currentStage && !isStageDowngrade(currentStage, nextStage)) {
-    await db
-      .from('companies')
-      .update({ stage: nextStage, updated_at: now })
-      .eq('id', msg.company_id);
-  }
+  // 3. Envío real (email via SMTP) al destinatario explícito + sent/sent_to, interaction y
+  //    stage (lógica compartida con la CLI y el auto_send del cron). Si falla, tira y el
+  //    draft queda sin marcar.
+  const res = await deliver.sendMessage(db, msg, to ? { to } : {});
+  if (res.to) to = res.to;
 
   revalidatePath('/drafts');
   revalidatePath('/nurture');

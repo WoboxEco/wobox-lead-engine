@@ -6,7 +6,7 @@ import { BUNDLED_PROMPTS } from './bundled.generated.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_ROOT = resolve(__dirname, '..');
 
-export type PromptCategory = 'scoring' | 'messages';
+export type PromptCategory = 'scoring' | 'messages' | 'replies';
 
 /**
  * Texto crudo del prompt. Lee el .md del disco (así editar un prompt se ve al toque en la

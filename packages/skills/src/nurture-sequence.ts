@@ -19,6 +19,23 @@ export interface NurtureSequenceOptions {
   limit?: number;
   dryRun?: boolean;
   model?: string;
+  /**
+   * Corte por tiempo (cron): antes de generar cada paso se llama; si devuelve false
+   * se frena y el resto queda para la proxima corrida.
+   */
+  canContinue?: () => boolean;
+}
+
+export interface NurtureSequenceResult {
+  generated: number;
+  waiting: number;
+  done: number;
+  skipped: number;
+  paused: number;
+  /** true si se freno por canContinue() antes de recorrer todas las companies. */
+  cutShort: boolean;
+  /** Drafts creados en esta corrida (para auto_send). */
+  draftIds: string[];
 }
 
 type LastMessage = {
@@ -33,16 +50,18 @@ type CompanyRow = {
   name: string;
   stage: string;
   venture: string;
+  sequence_paused: boolean | null;
+  sequence_resume_at: string | null;
 };
 
-export async function run(opts: NurtureSequenceOptions): Promise<void> {
+export async function run(opts: NurtureSequenceOptions): Promise<NurtureSequenceResult> {
   const db = createAdminClient();
   const log = createLogger('nurture-sequence');
   const limit = opts.limit ?? 50;
 
   let query = db
     .from('companies')
-    .select('id, name, stage, venture')
+    .select('id, name, stage, venture, sequence_paused, sequence_resume_at')
     .eq('stage', 'nurturing')
     .limit(limit);
   if (opts.venture) query = query.eq('venture', opts.venture);
@@ -51,22 +70,38 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
   if (error) throw new Error(error.message);
   const companies = (data as unknown as CompanyRow[]) ?? [];
 
+  const result: NurtureSequenceResult = {
+    generated: 0,
+    waiting: 0,
+    done: 0,
+    skipped: 0,
+    paused: 0,
+    cutShort: false,
+    draftIds: [],
+  };
+
   if (companies.length === 0) {
     console.log('No hay companies en stage=nurturing');
-    return;
+    return result;
   }
 
-  let generated = 0;
-  let waiting = 0;
-  let done = 0;
-  let skipped = 0;
-
   for (const c of companies) {
+    if (c.sequence_paused) {
+      console.log(`[${c.name}] secuencia pausada`);
+      result.paused++;
+      continue;
+    }
+    if (c.sequence_resume_at && new Date(c.sequence_resume_at).getTime() > Date.now()) {
+      console.log(`[${c.name}] reprogramada hasta ${c.sequence_resume_at.slice(0, 10)}`);
+      result.waiting++;
+      continue;
+    }
+
     const last = await loadLastNurtureMessage(db, c.id);
 
     if (!last) {
       console.log(`[${c.name}] skip: sin mensaje nurture previo (arrancar con generate-messages)`);
-      skipped++;
+      result.skipped++;
       continue;
     }
 
@@ -77,7 +112,7 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
     const lastStepOfSequence = isEmail ? generateMessages.EMAIL_NURTURE_LAST_STEP : 4;
     if (lastStep >= lastStepOfSequence) {
       console.log(`[${c.name}] secuencia completa (step ${lastStep})`);
-      done++;
+      result.done++;
       continue;
     }
 
@@ -87,7 +122,7 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
     const already = await draftExists(db, c.id, nextStep);
     if (already) {
       console.log(`[${c.name}] ya existe draft para step ${nextStep}`);
-      skipped++;
+      result.skipped++;
       continue;
     }
 
@@ -98,7 +133,7 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
       console.log(
         `[${c.name}] step ${lastStep} aun no esta sent (status=${last.status}); nurture aprobar primero`,
       );
-      skipped++;
+      result.skipped++;
       continue;
     }
 
@@ -106,18 +141,24 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
       console.log(
         `[${c.name}] step ${nextStep} en ${(requiredDelay - daysSince).toFixed(1)}d (ultimo envio hace ${daysSince.toFixed(1)}d)`,
       );
-      waiting++;
+      result.waiting++;
       continue;
     }
 
     if (opts.dryRun) {
       console.log(`[${c.name}] [DRY-RUN] generaria step ${nextStep}`);
-      generated++;
+      result.generated++;
       continue;
     }
 
-    console.log(`[${c.name}] generando step ${nextStep}...`);
+    if (opts.canContinue && !opts.canContinue()) {
+      result.cutShort = true;
+      break;
+    }
+
+    console.log(`[${c.name}] generando step ${nextStep} (${last.channel})...`);
     try {
+      // Mismo canal que el paso anterior (antes caia siempre en el default linkedin).
       await generateMessages.run({
         id: c.id,
         approach: 'nurture',
@@ -125,16 +166,32 @@ export async function run(opts: NurtureSequenceOptions): Promise<void> {
         step: String(nextStep),
         ...(opts.model ? { model: opts.model } : {}),
       });
-      generated++;
+      result.generated++;
+      const draftId = await findDraftId(db, c.id, nextStep);
+      if (draftId) result.draftIds.push(draftId);
     } catch (err) {
       log.error({ err: String(err), company: c.name, step: nextStep }, 'generate failed');
-      skipped++;
+      result.skipped++;
     }
   }
 
   console.log(
-    `\nResumen: generated=${generated}, waiting=${waiting}, done=${done}, skipped=${skipped}`,
+    `\nResumen: generated=${result.generated}, waiting=${result.waiting}, done=${result.done}, skipped=${result.skipped}, paused=${result.paused}${result.cutShort ? ' (cortado por tiempo)' : ''}`,
   );
+  return result;
+}
+
+async function findDraftId(db: DbClient, companyId: string, step: number): Promise<string | null> {
+  const { data } = await db
+    .from('messages')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('approach_type', 'nurture')
+    .eq('sequence_step', step)
+    .eq('status', 'draft')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  return ((data as unknown as Array<{ id: string }>) ?? [])[0]?.id ?? null;
 }
 
 async function loadLastNurtureMessage(

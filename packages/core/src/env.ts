@@ -42,6 +42,11 @@ const envSchema = z.object({
   EMAIL_FROM_NAME: z.string().default('Sebastián | Wobox'),
   EMAIL_DAILY_LIMIT: z.coerce.number().int().positive().default(40),
 
+  // Vercel Cron: el route /api/cron/daily exige `Authorization: Bearer <CRON_SECRET>`.
+  CRON_SECRET: z.string().min(1).optional(),
+  // Presupuesto de tiempo del cron diario (ms). Hobby corta a los 10s por default.
+  CRON_TIME_BUDGET_MS: z.coerce.number().int().positive().default(9000),
+
   APP_BASE_URL: z.string().url().default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),

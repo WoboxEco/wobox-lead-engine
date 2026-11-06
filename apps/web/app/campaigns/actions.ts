@@ -43,3 +43,15 @@ export async function setCampaignStatus(formData: FormData): Promise<void> {
 
   revalidatePath('/campaigns');
 }
+
+export async function setCampaignAutoSend(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') ?? '');
+  const autoSend = String(formData.get('auto_send') ?? '') === 'true';
+  if (!id) throw new Error('missing id');
+
+  const db = createAdminClient();
+  const { error } = await db.from('campaigns').update({ auto_send: autoSend }).eq('id', id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath('/campaigns');
+}
