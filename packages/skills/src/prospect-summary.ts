@@ -24,6 +24,8 @@ export function isProspectRegion(value: string): value is ProspectRegion {
 export interface SearchLeadsResult {
   inserted: number;
   duplicates: number;
+  /** Descartadas por el pre-filtro de rubro (no se insertan ni se scorean). */
+  filteredOut: number;
   /** Páginas de Apollo pedidas en esta corrida (1 crédito c/u). */
   pagesFetched: number;
   /** Última página pedida (o la que tocaba si no se pidió ninguna). */
@@ -41,11 +43,15 @@ export const EXHAUSTED_MESSAGE =
   'Se agotaron los resultados para este filtro: probá otro rubro o región';
 
 /**
- * "X nuevos, Y duplicados, Z calificados — página N de M (K créditos)".
+ * "X nuevos, Y duplicados, Z filtrados por rubro, W calificados — página N de M (K créditos)".
  * `qualified` null = scoring no corrió (o falló), se omite ese tramo.
  */
 export function formatProspectSummary(r: SearchLeadsResult, qualified: number | null): string {
-  const parts = [`${r.inserted} nuevos`, `${r.duplicates} duplicados`];
+  const parts = [
+    `${r.inserted} nuevos`,
+    `${r.duplicates} duplicados`,
+    `${r.filteredOut ?? 0} filtrados por rubro`,
+  ];
   if (qualified !== null) parts.push(`${qualified} calificados`);
   const pageText = r.totalPages ? `página ${r.page} de ${r.totalPages}` : `página ${r.page}`;
   const credits = `${r.credits} ${r.credits === 1 ? 'crédito' : 'créditos'}`;

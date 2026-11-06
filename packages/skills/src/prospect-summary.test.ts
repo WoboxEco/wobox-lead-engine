@@ -9,6 +9,7 @@ import {
 const base: SearchLeadsResult = {
   inserted: 7,
   duplicates: 18,
+  filteredOut: 5,
   pagesFetched: 2,
   page: 3,
   totalPages: 12,
@@ -21,13 +22,13 @@ const base: SearchLeadsResult = {
 describe('formatProspectSummary', () => {
   it('arma el resumen completo', () => {
     expect(formatProspectSummary(base, 4)).toBe(
-      '7 nuevos, 18 duplicados, 4 calificados — página 3 de 12 (2 créditos)',
+      '7 nuevos, 18 duplicados, 5 filtrados por rubro, 4 calificados — página 3 de 12 (2 créditos)',
     );
   });
 
   it('omite calificados si no hubo scoring y singular de crédito', () => {
     expect(formatProspectSummary({ ...base, credits: 1 }, null)).toBe(
-      '7 nuevos, 18 duplicados — página 3 de 12 (1 crédito)',
+      '7 nuevos, 18 duplicados, 5 filtrados por rubro — página 3 de 12 (1 crédito)',
     );
   });
 

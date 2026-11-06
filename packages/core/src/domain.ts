@@ -49,6 +49,7 @@ export type Channel = (typeof CHANNELS)[number];
 export const SCORING_MODELS = [
   'scoring-wobox-v1',
   'scoring-wobox-fashion-v1',
+  'scoring-wobox-fashion-v2',
   'scoring-loop-v1',
 ] as const;
 export type ScoringModel = (typeof SCORING_MODELS)[number];
@@ -81,7 +82,7 @@ export function isWoboxVenture(v: Venture): v is 'wobox_food' | 'wobox_fashion' 
 }
 
 export function scoringModelForVenture(v: Venture): ScoringModel {
-  if (v === 'wobox_fashion') return 'scoring-wobox-fashion-v1';
+  if (v === 'wobox_fashion') return 'scoring-wobox-fashion-v2';
   return isWoboxVenture(v) ? 'scoring-wobox-v1' : 'scoring-loop-v1';
 }
 

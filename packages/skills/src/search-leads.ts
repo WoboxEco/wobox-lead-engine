@@ -7,6 +7,15 @@ import {
   writeErrorLog,
 } from '@wobox/core';
 import { apollo } from '@wobox/integrations';
+import {
+  FASHION_EMPLOYEE_RANGES,
+  FASHION_INDUSTRIES_BY_SUBSECTOR,
+  FASHION_KEYWORDS_BY_SUBSECTOR,
+  FASHION_KEYWORD_TAGS_BY_SUBSECTOR,
+  FASHION_SUBSECTORS,
+  type FashionSubsector,
+  checkFashionIcp,
+} from './fashion-icp.js';
 import type { SearchLeadsResult } from './prospect-summary.js';
 
 // Default: Haiku. Mantenido por parity con otras skills aunque hoy no se usa Claude aca.
@@ -41,32 +50,7 @@ export interface SearchLeadsOptions {
   timeBudgetMs?: number;
 }
 
-export const FASHION_SUBSECTORS = ['ropa', 'calzado', 'muebles_deco', 'todos'] as const;
-export type FashionSubsector = (typeof FASHION_SUBSECTORS)[number];
-
-// Presets por rubro dentro de wobox_fashion. 'todos' usa los defaults del venture.
-const FASHION_SUBSECTOR_PRESETS: Record<
-  Exclude<FashionSubsector, 'todos'>,
-  { industries: string[]; keywords: string }
-> = {
-  ropa: {
-    industries: ['apparel and fashion', 'retail apparel and fashion', 'fashion accessories'],
-    keywords: 'ropa indumentaria moda apparel clothing',
-  },
-  calzado: {
-    industries: ['footwear', 'retail apparel and fashion', 'sporting goods'],
-    keywords: 'calzado zapatillas zapatos footwear',
-  },
-  muebles_deco: {
-    industries: [
-      'furniture',
-      'home furnishings',
-      'retail furniture and home furnishings',
-      'interior design',
-    ],
-    keywords: 'muebles decoracion deco hogar textil furniture home',
-  },
-};
+export { FASHION_SUBSECTORS, type FashionSubsector } from './fashion-icp.js';
 
 // Titulos que tratamos como decision makers para la busqueda inicial.
 const DECISION_MAKER_TITLES = [
@@ -82,12 +66,12 @@ const DECISION_MAKER_TITLES = [
 
 // Defaults por venture: ajustables por CLI con flags --industries, --employee-ranges, etc.
 //
-// IMPORTANTE: estos van a `q_organization_keyword_tags` (text-match, no hard filter).
-// Apollo no acepta `q_organization_industries`. Si querés hard match, pasale tag IDs
-// via flag (no implementado en CLI todavia, requiere lookup separado).
-//
-// `keywords` se manda a `q_keywords` (general text) para reforzar la senal — sirve
-// mucho cuando los keyword_tags solos son muy amplios.
+// wobox_food: `industries` va a `q_organization_keyword_tags` (text-match, no hard filter) y
+// `keywords` a `q_keywords`.
+// wobox_fashion: `industries` se resuelve a `organization_industry_tag_ids` (hard filter, ver
+// apollo.resolveIndustryTagIds) y no se manda `q_keywords` (salvo --keywords explícito). Si no
+// se resuelve ningún ID, cae al text-match de antes. Además corre el pre-filtro sin IA de
+// fashion-icp.ts antes de insertar.
 //
 // Excludes comunes: sectores que aparecen en AR con muchos empleados pero no son ICP.
 const COMMON_EXCLUDES = [
@@ -133,17 +117,13 @@ const DEFAULTS_BY_VENTURE: Record<
   },
   // Wobox Fashion: marcas de moda + muebles/deco con tienda fisica + e-commerce.
   // ICP: brands con stock estacional o discontinuado (ropa, accesorios, calzado, muebles, deco).
+  // ICP afinado con las marcas que contactamos (Key Biscayne, Jackie Smith, Cibeles, RUMA…):
+  // marcas argentinas de indumentaria/calzado/carteras con marca propia, e-commerce y locales.
+  // Muebles/deco solo con --subsector=muebles_deco.
   wobox_fashion: {
-    industries: [
-      'apparel and fashion',
-      'retail apparel and fashion',
-      'fashion accessories',
-      'footwear',
-      'furniture',
-      'home furnishings',
-    ],
-    keywords: 'apparel fashion clothing moda indumentaria calzado muebles decoracion',
-    employeeRanges: ['11,50', '51,200'],
+    industries: FASHION_INDUSTRIES_BY_SUBSECTOR.todos,
+    keywords: FASHION_KEYWORDS_BY_SUBSECTOR.todos,
+    employeeRanges: FASHION_EMPLOYEE_RANGES,
     locations: ['Argentina'],
     excludeIndustries: COMMON_EXCLUDES,
   },
@@ -186,19 +166,39 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
     if (venture !== 'wobox_fashion') {
       throw new Error('search-leads: --subsector solo aplica a venture=wobox_fashion');
     }
-    if (subsector !== 'todos') {
-      const preset = FASHION_SUBSECTOR_PRESETS[subsector as Exclude<FashionSubsector, 'todos'>];
-      presetIndustries = preset.industries;
-      presetKeywords = preset.keywords;
-    }
+    presetIndustries = FASHION_INDUSTRIES_BY_SUBSECTOR[subsector as FashionSubsector];
+    presetKeywords = FASHION_KEYWORDS_BY_SUBSECTOR[subsector as FashionSubsector];
   }
+  const fashionSubsector: FashionSubsector | null =
+    venture === 'wobox_fashion' ? ((subsector as FashionSubsector | undefined) ?? 'todos') : null;
 
   // CSV simple para industries / exclude / locations; ; para employeeRanges (los valores ya tienen ,).
   const industries = parseCsv(opts.industries) ?? presetIndustries;
   const employeeRanges = parseSemicolonList(opts.employeeRanges) ?? defaults.employeeRanges;
   const excludeIndustries = parseCsv(opts.excludeIndustries) ?? defaults.excludeIndustries;
   const locations = opts.region ? [opts.region] : defaults.locations;
-  const keywords = opts.keywords ?? presetKeywords;
+  let keywords = opts.keywords ?? presetKeywords;
+
+  // Fashion: filtro duro por industry tag IDs. Si no se resuelve ninguno, text-match como antes.
+  let industryTagIds: string[] = [];
+  if (venture === 'wobox_fashion') {
+    const tags = await apollo.resolveIndustryTagIds(industries);
+    industryTagIds = tags.ids;
+    log.info(
+      { resolved: tags.resolved, missing: tags.missing },
+      'apollo industry tag ids (copiar los resueltos a KNOWN_INDUSTRY_TAG_IDS)',
+    );
+    if (industryTagIds.length > 0 && !opts.keywords) keywords = '';
+    if (industryTagIds.length === 0) {
+      log.warn({ industries }, 'sin tag IDs de industria: uso keyword tags (text-match)');
+    }
+  }
+  const industryMode = industryTagIds.length > 0 ? 'tag_ids' : 'keyword_tags';
+  // Con tag IDs, el rubro (ej. calzado) se acota con keyword tags dentro de la industria.
+  const keywordTags =
+    industryMode === 'tag_ids' && fashionSubsector
+      ? FASHION_KEYWORD_TAGS_BY_SUBSECTOR[fashionSubsector]
+      : [];
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
   const dryRun = !!opts.dryRun;
@@ -212,6 +212,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
     keywords,
     employeeRanges,
     locations,
+    industryMode,
   });
   const filtersHash = hashFilters(filters);
 
@@ -222,6 +223,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
   const result: SearchLeadsResult = {
     inserted: 0,
     duplicates: 0,
+    filteredOut: 0,
     pagesFetched: 0,
     page: startPage,
     totalPages,
@@ -281,6 +283,8 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
     try {
       res = await apollo.searchOrganizations({
         industries,
+        industryTagIds,
+        keywordTags,
         excludeIndustries,
         locations,
         employeeRanges,
@@ -337,6 +341,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
 
     const pageStats = await processOrgs(db, orgs, {
       venture,
+      fashionSubsector,
       campaignId,
       dryRun,
       seen,
@@ -344,6 +349,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
     });
     result.inserted += pageStats.inserted;
     result.duplicates += pageStats.duplicates;
+    result.filteredOut += pageStats.filteredOut;
     result.contactsAdded += pageStats.contactsAdded;
     result.insertedIds.push(...pageStats.insertedIds);
 
@@ -362,7 +368,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
   const pageText = `página ${result.page}${totalPages ? ` de ${totalPages}` : ''}`;
   if (dryRun) {
     console.log(
-      `\nsearch-leads [DRY]: ${pageText} nuevos=${result.inserted} duplicates=${result.duplicates} (no se insertó nada, no se buscaron decision-makers, no se avanzó el cursor).`,
+      `\nsearch-leads [DRY]: ${pageText} nuevos=${result.inserted} duplicates=${result.duplicates} filtrados_rubro=${result.filteredOut} (no se insertó nada, no se buscaron decision-makers, no se avanzó el cursor).`,
     );
     console.log(
       `Nota: la búsqueda de organizaciones en Apollo consumió ${result.credits} crédito(s) real(es) (no trackeado).`,
@@ -372,7 +378,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
 
   // Solo contamos search-organizations; searchDecisionMakers no esta tracked.
   console.log(
-    `search-leads done: ${pageText} pages=${result.pagesFetched} inserted=${result.inserted} duplicates=${result.duplicates} contacts=${result.contactsAdded} credits=${result.credits}${result.exhausted ? ' (agotado: probá otro rubro o región)' : ''}`,
+    `search-leads done: ${pageText} pages=${result.pagesFetched} inserted=${result.inserted} duplicates=${result.duplicates} filtrados_rubro=${result.filteredOut} contacts=${result.contactsAdded} credits=${result.credits}${result.exhausted ? ' (agotado: probá otro rubro o región)' : ''}`,
   );
   return result;
 }
@@ -410,18 +416,37 @@ async function processOrgs(
   orgs: apollo.ApolloOrganization[],
   ctx: {
     venture: SearchLeadsVenture;
+    /** Solo wobox_fashion: activa el pre-filtro de rubro. */
+    fashionSubsector: FashionSubsector | null;
     campaignId: string | null;
     dryRun: boolean;
     seen: SeenKeys;
     log: ReturnType<typeof createLogger>;
   },
-): Promise<{ inserted: number; duplicates: number; contactsAdded: number; insertedIds: string[] }> {
-  const { venture, campaignId, dryRun, seen, log } = ctx;
+): Promise<{
+  inserted: number;
+  duplicates: number;
+  filteredOut: number;
+  contactsAdded: number;
+  insertedIds: string[];
+}> {
+  const { venture, fashionSubsector, campaignId, dryRun, seen, log } = ctx;
   let duplicates = 0;
+  let filteredOut = 0;
   const fresh: apollo.ApolloOrganization[] = [];
 
-  // Dedup sincrónico (también dentro de la misma página) antes de cualquier insert.
+  // Pre-filtro de rubro (sin IA) + dedup sincrónico (también dentro de la página) antes de insertar.
   for (const org of orgs) {
+    if (fashionSubsector) {
+      const verdict = checkFashionIcp(org, fashionSubsector);
+      if (!verdict.ok) {
+        filteredOut += 1;
+        log.info({ name: org.name, reason: verdict.reason }, 'filtrado por rubro');
+        if (dryRun) console.log(`[DRY][filtrado] ${org.name} — ${verdict.reason}`);
+        continue;
+      }
+    }
+
     const websiteNorm = org.website_url ? normalizeWebsite(org.website_url) : '';
     const linkedinKey = (org.linkedin_url ?? '').toLowerCase();
     const nameKey = (org.name ?? '').toLowerCase().trim();
@@ -447,7 +472,7 @@ async function processOrgs(
       console.log(`[DRY] ${org.name} | ${buildRegion(org) ?? '-'} | ${org.website_url ?? '-'}`);
     }
     // contamos como "se insertaría"
-    return { inserted: fresh.length, duplicates, contactsAdded: 0, insertedIds: [] };
+    return { inserted: fresh.length, duplicates, filteredOut, contactsAdded: 0, insertedIds: [] };
   }
 
   const insertedIds: string[] = [];
@@ -464,6 +489,9 @@ async function processOrgs(
         region: buildRegion(org),
         source: 'apollo',
         stage: 'new',
+        // La industria de Apollo le da contexto al scoring (no hay columna de empleados).
+        ...(org.industry ? { subsector: org.industry } : {}),
+        ...(venture === 'wobox_fashion' ? { vertical: 'fashion' } : {}),
         apollo_id: org.id,
         campaign_id: campaignId,
       } as never)
@@ -506,7 +534,7 @@ async function processOrgs(
     }
   });
 
-  return { inserted: insertedIds.length, duplicates, contactsAdded, insertedIds };
+  return { inserted: insertedIds.length, duplicates, filteredOut, contactsAdded, insertedIds };
 }
 
 /** Filtros efectivos que identifican un cursor (normalizados: orden de arrays y mayúsculas no importan). */
@@ -517,6 +545,8 @@ export interface CursorFilters {
   keywords: string;
   employeeRanges: string[];
   locations: string[];
+  /** 'tag_ids' = filtro duro por industria; 'keyword_tags' = text-match (default histórico). */
+  industryMode?: 'tag_ids' | 'keyword_tags';
 }
 
 export function buildCursorFilters(f: CursorFilters): CursorFilters {
@@ -528,19 +558,23 @@ export function buildCursorFilters(f: CursorFilters): CursorFilters {
     keywords: f.keywords.trim().toLowerCase().replace(/\s+/g, ' '),
     employeeRanges: norm(f.employeeRanges),
     locations: norm(f.locations),
+    industryMode: f.industryMode ?? 'keyword_tags',
   };
 }
 
 export function hashFilters(filters: CursorFilters): string {
   // Orden de keys fijo (el de la interfaz) para que el hash sea estable.
-  const canonical = JSON.stringify([
+  const parts: unknown[] = [
     filters.venture,
     filters.subsector,
     filters.industries,
     filters.keywords,
     filters.employeeRanges,
     filters.locations,
-  ]);
+  ];
+  // Solo se agrega en modo tag_ids: los cursores existentes (keyword_tags) conservan su hash.
+  if (filters.industryMode === 'tag_ids') parts.push('tag_ids');
+  const canonical = JSON.stringify(parts);
   return createHash('sha256').update(canonical).digest('hex');
 }
 

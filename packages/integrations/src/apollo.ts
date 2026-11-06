@@ -16,6 +16,10 @@ export interface ApolloOrganization {
   linkedin_url?: string | null;
   primary_domain?: string | null;
   industry?: string | null;
+  /** ID del tag de industria de Apollo (sirve para aprender el mapeo nombre → ID). */
+  industry_tag_id?: string | null;
+  /** Keywords libres que Apollo asocia a la org. */
+  keywords?: string[] | null;
   estimated_num_employees?: number | null;
   city?: string | null;
   state?: string | null;
@@ -35,6 +39,11 @@ export interface SearchOrganizationsParams {
    * Si se pasan, anula `industries` (Apollo aplica este filtro como hard match).
    */
   industryTagIds?: string[];
+  /**
+   * Keyword tags que se mandan JUNTO con `industryTagIds` (`q_organization_keyword_tags`, OR
+   * entre ellas) para acotar dentro de la industria. Sin `industryTagIds` se ignora.
+   */
+  keywordTags?: string[];
   locations?: string[];
   employeeRanges?: string[]; // e.g. ["11,50", "51,200"]
   /** General text query (matches name, description, etc.) */
@@ -62,6 +71,7 @@ export async function searchOrganizations(
   // Si hay tag IDs, usamos solo eso. Si no, mandamos keyword tags.
   if (params.industryTagIds?.length) {
     body.organization_industry_tag_ids = params.industryTagIds;
+    if (params.keywordTags?.length) body.q_organization_keyword_tags = params.keywordTags;
   } else if (params.industries?.length) {
     body.q_organization_keyword_tags = params.industries;
   }
@@ -82,6 +92,7 @@ export async function searchOrganizations(
 
   // Apollo a veces devuelve `accounts` en lugar de `organizations` segun el plan/endpoint.
   const organizations = res.organizations ?? res.accounts ?? [];
+  rememberIndustryTags(organizations);
 
   return {
     organizations,
@@ -89,6 +100,120 @@ export async function searchOrganizations(
     totalPages: res.pagination?.total_pages ?? 1,
     totalEntries: res.pagination?.total_entries ?? organizations.length,
   };
+}
+
+// ---------------------------------------------------------------------------------------
+// Industry tag IDs (filtro duro `organization_industry_tag_ids`)
+//
+// Apollo identifica cada industria (taxonomía de LinkedIn, ej "apparel & fashion") con un ID
+// interno tipo "5567cd...". No hay un endpoint público documentado para listarlas, así que:
+//   1. `KNOWN_INDUSTRY_TAG_IDS`: IDs verificados hardcodeados (vacío hasta confirmar contra la
+//      cuenta; cuando se resuelven se loguean con `resolved` para copiarlos acá).
+//   2. Lookup en `POST /tags/search` (`kind: linkedin_industry`): el endpoint que usa la app web
+//      de Apollo. Sin reintentos y con timeout corto; si falla, esa industria queda sin resolver.
+//   3. Aprendizaje pasivo: cada org que devuelve `searchOrganizations` trae `industry` +
+//      `industry_tag_id`, y se guarda en el cache.
+// Cache en memoria del proceso (en Vercel dura lo que vive la instancia caliente).
+// ---------------------------------------------------------------------------------------
+
+/** Nombre de industria normalizado (minúsculas, "&" → "and", espacios simples). */
+export function normalizeIndustryName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * IDs verificados (nombre normalizado → tag ID). Sacados de `POST /tags/search`
+ * (`kind: linkedin_industry`) el 2026-11-06. Para agregar uno, copiarlo del log `resolved`.
+ */
+export const KNOWN_INDUSTRY_TAG_IDS: Readonly<Record<string, string>> = {
+  'apparel and fashion': '5567cd82736964540d0b0000',
+  'luxury goods and jewelry': '5567cda97369644cfd3e0000',
+  furniture: '5567cede73696440d0040000',
+  retail: '5567ced173696450cb580000',
+  textiles: '5567e1327369641d91ce0300',
+  'consumer goods': '5567ce987369643b789e0000',
+  'sporting goods': '5567e113736964198d5e0800',
+  'food and beverages': '5567ce1e7369643b806a0000',
+  supermarkets: '5567e2a97369642a553d0000',
+  wholesale: '5567d01e73696457ee100000',
+};
+
+/** nombre normalizado → tag ID (o null = lookup ya falló en este proceso). */
+const industryTagCache = new Map<string, string | null>(Object.entries(KNOWN_INDUSTRY_TAG_IDS));
+
+const TAG_LOOKUP_TIMEOUT_MS = 2_500;
+
+function rememberIndustryTags(orgs: ApolloOrganization[]): void {
+  for (const o of orgs) {
+    if (!o.industry || !o.industry_tag_id) continue;
+    const key = normalizeIndustryName(o.industry);
+    if (!industryTagCache.get(key)) industryTagCache.set(key, o.industry_tag_id);
+  }
+}
+
+export interface ResolveIndustryTagIdsResult {
+  ids: string[];
+  /** nombre → ID de lo resuelto (para loguear y hardcodear). */
+  resolved: Record<string, string>;
+  missing: string[];
+}
+
+/** Resuelve nombres de industria a tag IDs de Apollo (cache → lookup). Nunca tira. */
+export async function resolveIndustryTagIds(names: string[]): Promise<ResolveIndustryTagIdsResult> {
+  // nombre normalizado → nombre original (el fuzzy de Apollo matchea mejor "apparel & fashion").
+  const byKey = new Map<string, string>();
+  for (const n of names) {
+    const k = normalizeIndustryName(n);
+    if (k && !byKey.has(k)) byKey.set(k, n);
+  }
+  const keys = [...byKey.keys()];
+  await Promise.all(
+    keys
+      .filter((k) => !industryTagCache.has(k))
+      .map(async (k) => {
+        industryTagCache.set(k, await lookupIndustryTag(byKey.get(k) ?? k));
+      }),
+  );
+  const resolved: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const k of keys) {
+    const id = industryTagCache.get(k);
+    if (id) resolved[k] = id;
+    else missing.push(k);
+  }
+  return { ids: [...new Set(Object.values(resolved))], resolved, missing };
+}
+
+async function lookupIndustryTag(name: string): Promise<string | null> {
+  const key = normalizeIndustryName(name);
+  try {
+    const res = await apolloFetch<{
+      tags?: Array<{ id?: string; _id?: string; cleaned_name?: string; name?: string }>;
+    }>(
+      '/tags/search',
+      { q_tag_fuzzy_name: name, kind: 'linkedin_industry', per_page: 10 },
+      0,
+      TAG_LOOKUP_TIMEOUT_MS,
+    );
+    const match = (res.tags ?? []).find(
+      (t) => normalizeIndustryName(t.cleaned_name ?? t.name ?? '') === key,
+    );
+    return match?.id ?? match?._id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Solo tests. */
+export function _resetIndustryTagCache(): void {
+  industryTagCache.clear();
+  for (const [k, v] of Object.entries(KNOWN_INDUSTRY_TAG_IDS)) industryTagCache.set(k, v);
 }
 
 export interface ApolloContact {
@@ -158,12 +283,16 @@ export async function searchDecisionMakers(
 ): Promise<ApolloPersonTeaser[]> {
   const titles = params.titles ?? ['CEO', 'Founder', 'Owner', 'Co-Founder', 'Managing Director'];
   // Sin reintentos para uso interactivo
-  const res = await apolloFetch<{ people: ApolloPersonTeaser[] }>('/mixed_people/api_search', {
-    organization_ids: [params.orgId],
-    person_titles: titles,
-    page: 1,
-    per_page: params.perPage ?? 10,
-  }, 0);
+  const res = await apolloFetch<{ people: ApolloPersonTeaser[] }>(
+    '/mixed_people/api_search',
+    {
+      organization_ids: [params.orgId],
+      person_titles: titles,
+      page: 1,
+      per_page: params.perPage ?? 10,
+    },
+    0,
+  );
   return res.people ?? [];
 }
 
@@ -230,7 +359,12 @@ function normalizeDomain(input: string): string {
   return (base.split('/')[0] ?? '').split('?')[0] ?? '';
 }
 
-async function apolloFetch<T>(path: string, body: unknown, retries = 3): Promise<T> {
+async function apolloFetch<T>(
+  path: string,
+  body: unknown,
+  retries = 3,
+  timeoutMs?: number,
+): Promise<T> {
   const e = env();
   if (!e.APOLLO_API_KEY) {
     throw new Error('APOLLO_API_KEY not configured');
@@ -245,6 +379,7 @@ async function apolloFetch<T>(path: string, body: unknown, retries = 3): Promise
           'X-Api-Key': e.APOLLO_API_KEY ?? '',
         },
         body: JSON.stringify(body),
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
       if (!res.ok) {
         const text = await res.text();
