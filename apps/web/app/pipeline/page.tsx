@@ -229,13 +229,13 @@ export default async function PipelinePage({ searchParams }: PageProps) {
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-muted border-b border-[var(--border)]">
                   <th className="py-3 px-4 w-[60px]">{sortHeader('score', 'Score')}</th>
-                  <th className="py-3 px-4">Company</th>
                   <th className="py-3 px-4 whitespace-nowrap">{sortHeader('alta', 'Alta')}</th>
+                  <th className="py-3 px-4">Company</th>
                   <th className="py-3 px-4">Stage</th>
                   <th className="py-3 px-4">Venture · BP</th>
                   <th className="py-3 px-4">Ubicacion</th>
                   <th className="py-3 px-4">Instagram</th>
-                  <th className="py-3 px-4">Contactos</th>
+                  <th className="py-3 px-4 w-[220px]">Contactos</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -248,10 +248,10 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                     <td className={`py-3 px-4 tabular-nums ${scoreClass(r.score)}`}>
                       {r.score ?? '-'}
                     </td>
-                    <td className="py-3 px-4 font-medium">{r.name}</td>
                     <td className="py-3 px-4 text-muted-strong tabular-nums whitespace-nowrap">
                       {formatAlta(r.created_at)}
                     </td>
+                    <td className="py-3 px-4 font-medium">{r.name}</td>
                     <td className="py-3 px-4">
                       <span className={`pill stage-${r.stage}`}>
                         {STAGE_LABELS[r.stage] ?? r.stage.replace('_', ' ')}
@@ -289,27 +289,31 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                         <span className="text-muted">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 max-w-[220px]">
                       {r.contacts.length === 0 ? (
                         <span className="text-muted text-[12px]">-</span>
                       ) : (
                         <div className="flex flex-col gap-1">
                           {r.contacts.map((c) => (
-                            <div key={c.id} className="flex items-center gap-1.5 text-[12px]">
+                            <div
+                              key={c.id}
+                              className="flex items-center gap-1.5 text-[12px] min-w-0"
+                              title={[c.name, c.role, c.email].filter(Boolean).join(' · ')}
+                            >
                               {c.email ? (
                                 <span className="text-accent">✓</span>
                               ) : (
                                 <UnlockButton contactId={c.id} />
                               )}
                               <span
-                                className={
+                                className={`truncate ${
                                   c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'
-                                }
+                                }`}
                               >
                                 {c.name}
+                                {c.role ? <span className="text-muted"> · {c.role}</span> : null}
+                                {c.email ? <span className="text-muted"> · {c.email}</span> : null}
                               </span>
-                              {c.role && <span className="text-muted">· {c.role}</span>}
-                              {c.email && <span className="text-muted">· {c.email}</span>}
                             </div>
                           ))}
                         </div>
