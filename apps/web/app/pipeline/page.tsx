@@ -1,5 +1,5 @@
 import { createAdminClient } from '@wobox/core';
-import { AtSign, Filter, MapPin, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, AtSign, Filter, MapPin, X } from 'lucide-react';
 import Link from 'next/link';
 import { changeStage, discardCompany } from './actions';
 import { UnlockButton } from './unlock-button';
@@ -51,15 +51,19 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   const venture = pickString(params.venture);
   const stage = pickString(params.stage);
   const minScore = pickString(params.min);
+  // Orden de la tabla: por defecto los leads más nuevos primero.
+  const sort: SortKey = params.sort === 'score' ? 'score' : 'alta';
+  const dir: SortDir = params.dir === 'asc' ? 'asc' : 'desc';
 
   const db = createAdminClient();
 
   let q = db
     .from('companies')
     .select(
-      'id, name, venture, stage, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, scores(total_score, scored_at), contacts(id, name, role, email, linkedin_url, warm_path, is_decision_maker)',
+      'id, name, venture, stage, created_at, vertical, subsector, buyer_persona, region, neighborhood, instagram_handle, social_followers, scores(total_score, scored_at), contacts(id, name, role, email, linkedin_url, warm_path, is_decision_maker)',
     )
-    .order('created_at', { ascending: false })
+    // Con orden por alta ascendente traemos los 200 más viejos; en el resto, los 200 más nuevos.
+    .order('created_at', { ascending: sort === 'alta' && dir === 'asc' })
     .limit(200);
   if (venture) q = q.eq('venture', venture);
   if (stage) {
@@ -80,6 +84,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
     name: string;
     venture: string;
     stage: string;
+    created_at: string;
     vertical: string | null;
     subsector: string | null;
     buyer_persona: string | null;
@@ -112,7 +117,34 @@ export default async function PipelinePage({ searchParams }: PageProps) {
   });
 
   if (minScoreNum !== null) rows = rows.filter((r) => (r.score ?? -1) >= minScoreNum);
-  rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const sign = dir === 'asc' ? 1 : -1;
+  if (sort === 'score') {
+    rows.sort((a, b) => sign * ((a.score ?? -1) - (b.score ?? -1)));
+  } else {
+    rows.sort((a, b) => sign * a.created_at.localeCompare(b.created_at));
+  }
+
+  // Link de cabecera ordenable: conserva los filtros y alterna asc/desc sobre la columna activa.
+  const sortHref = (key: SortKey) => {
+    const qs = new URLSearchParams();
+    if (venture) qs.set('venture', venture);
+    if (stage) qs.set('stage', stage);
+    if (minScore) qs.set('min', minScore);
+    const nextDir: SortDir = sort === key ? (dir === 'desc' ? 'asc' : 'desc') : 'desc';
+    if (key !== 'alta') qs.set('sort', key);
+    if (nextDir !== 'desc') qs.set('dir', nextDir);
+    const q = qs.toString();
+    return q ? `/pipeline?${q}` : '/pipeline';
+  };
+  const sortHeader = (key: SortKey, label: string) => (
+    <Link
+      href={sortHref(key)}
+      className={`inline-flex items-center gap-1 hover:text-[var(--foreground)] transition-colors ${sort === key ? 'text-[var(--foreground)]' : ''}`}
+    >
+      {label}
+      {sort === key ? dir === 'desc' ? <ArrowDown size={11} /> : <ArrowUp size={11} /> : null}
+    </Link>
+  );
 
   const hasFilters = !!(venture || stage || minScoreNum !== null);
 
@@ -135,6 +167,9 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
       {/* Filtros */}
       <form method="get" className="surface p-4">
+        {/* Mantiene el orden elegido al aplicar filtros */}
+        {sort !== 'alta' ? <input type="hidden" name="sort" value={sort} /> : null}
+        {dir !== 'desc' ? <input type="hidden" name="dir" value={dir} /> : null}
         <div className="flex items-center gap-2 flex-wrap">
           <Filter size={14} className="text-muted shrink-0" />
           <select
@@ -193,13 +228,14 @@ export default async function PipelinePage({ searchParams }: PageProps) {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-left text-[11px] uppercase tracking-[0.08em] text-muted border-b border-[var(--border)]">
-                  <th className="py-3 px-4 w-[60px]">Score</th>
+                  <th className="py-3 px-4 w-[60px]">{sortHeader('score', 'Score')}</th>
+                  <th className="py-3 px-4 whitespace-nowrap">{sortHeader('alta', 'Alta')}</th>
                   <th className="py-3 px-4">Company</th>
                   <th className="py-3 px-4">Stage</th>
                   <th className="py-3 px-4">Venture · BP</th>
                   <th className="py-3 px-4">Ubicacion</th>
                   <th className="py-3 px-4">Instagram</th>
-                  <th className="py-3 px-4">Contactos</th>
+                  <th className="py-3 px-4 w-[220px]">Contactos</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -211,6 +247,9 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                   >
                     <td className={`py-3 px-4 tabular-nums ${scoreClass(r.score)}`}>
                       {r.score ?? '-'}
+                    </td>
+                    <td className="py-3 px-4 text-muted-strong tabular-nums whitespace-nowrap">
+                      {formatAlta(r.created_at)}
                     </td>
                     <td className="py-3 px-4 font-medium">{r.name}</td>
                     <td className="py-3 px-4">
@@ -250,27 +289,31 @@ export default async function PipelinePage({ searchParams }: PageProps) {
                         <span className="text-muted">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 max-w-[220px]">
                       {r.contacts.length === 0 ? (
                         <span className="text-muted text-[12px]">-</span>
                       ) : (
                         <div className="flex flex-col gap-1">
                           {r.contacts.map((c) => (
-                            <div key={c.id} className="flex items-center gap-1.5 text-[12px]">
+                            <div
+                              key={c.id}
+                              className="flex items-center gap-1.5 text-[12px] min-w-0"
+                              title={[c.name, c.role, c.email].filter(Boolean).join(' · ')}
+                            >
                               {c.email ? (
                                 <span className="text-accent">✓</span>
                               ) : (
                                 <UnlockButton contactId={c.id} />
                               )}
                               <span
-                                className={
+                                className={`truncate ${
                                   c.email ? 'text-[var(--foreground)]' : 'text-muted-strong'
-                                }
+                                }`}
                               >
                                 {c.name}
+                                {c.role ? <span className="text-muted"> · {c.role}</span> : null}
+                                {c.email ? <span className="text-muted"> · {c.email}</span> : null}
                               </span>
-                              {c.role && <span className="text-muted">· {c.role}</span>}
-                              {c.email && <span className="text-muted">· {c.email}</span>}
                             </div>
                           ))}
                         </div>
@@ -323,6 +366,23 @@ export default async function PipelinePage({ searchParams }: PageProps) {
       )}
     </div>
   );
+}
+
+type SortKey = 'alta' | 'score';
+type SortDir = 'asc' | 'desc';
+
+/** companies.created_at → "dd/mm hh:mm" en hora de Buenos Aires. */
+function formatAlta(iso: string): string {
+  const parts = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const get = (t: string) => (parts.find((p) => p.type === t)?.value ?? '').padStart(2, '0');
+  return `${get('day')}/${get('month')} ${get('hour')}:${get('minute')}`;
 }
 
 function pickString(v: string | string[] | undefined): string | null {
