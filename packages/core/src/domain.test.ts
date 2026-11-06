@@ -17,8 +17,8 @@ describe('scoringModelForVenture', () => {
     expect(scoringModelForVenture('wobox_food')).toBe('scoring-wobox-v1');
   });
 
-  it('devuelve scoring-wobox-fashion-v1 para wobox_fashion', () => {
-    expect(scoringModelForVenture('wobox_fashion')).toBe('scoring-wobox-fashion-v1');
+  it('devuelve scoring-wobox-fashion-v2 para wobox_fashion', () => {
+    expect(scoringModelForVenture('wobox_fashion')).toBe('scoring-wobox-fashion-v2');
   });
 
   it('devuelve scoring-loop-v1 para loop', () => {

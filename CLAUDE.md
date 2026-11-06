@@ -80,9 +80,10 @@ pnpm lint                          # Biome
 | `health-check` | — | Valida env + auth con APIs |
 | `import-csv` | — | Bulk import offline desde CSV |
 | `search-leads-web` | Apify + Claude | Apify Maps + IG por barrio |
-| `search-leads` | Apollo (1 cr/página, máx 3) | Apollo org search por venture (food/fashion) + decision-makers sin email. Retoma desde `sourcing_cursors.next_page` por hash de filtros y avanza si la página solo trae duplicados. `--dry-run` previsualiza 1 página sin insertar ni mover el cursor |
+| `search-leads` | Apollo (1 cr/página, máx 3) | Apollo org search por venture (food/fashion) + decision-makers sin email. Retoma desde `sourcing_cursors.next_page` por hash de filtros y avanza si la página solo trae duplicados. `--dry-run` previsualiza 1 página sin insertar ni mover el cursor. wobox_fashion: filtro duro `organization_industry_tag_ids` (IDs resueltos y cacheados en `apollo.resolveIndustryTagIds`), 11–500 empleados y pre-filtro sin IA de rubro (`fashion-icp.ts`) que no inserta ni scorea lo ajeno |
 | `enrich-lead` | Apify | IG followers + website scrape para IG handle |
-| `score-leads` | Claude | Scoring multi-dimensional con zod |
+| `score-leads` | Claude | Scoring multi-dimensional con zod (wobox_fashion usa `scoring-wobox-fashion-v2`, lookalike de las 17 marcas ideales) |
+| `rescore-discarded` | Claude | Re-puntúa con v2 los wobox_fashion `discarded` con último score 35–49 (`--dry-run`, `--limit`). En /pipeline: botón **Re-puntuar descartados** con filtro Wobox Fashion |
 | `check-warm-path` | Apollo (1 cr en `--auto-reveal`) | `--list`/`--mark` manual o `--auto` con API |
 | `generate-messages` | Claude | Draft por approach/venture/BP/canal |
 | `approve-message` | — | `--action=approve|edit|send|discard` |
@@ -116,6 +117,7 @@ pnpm lint                          # Biome
 | `POST /api/prospect` | Sourcing de **+ Prospect** (Apollo con cursor de paginación en `sourcing_cursors`, máx 3 páginas/corrida; loop vía Apify). Devuelve `search` (nuevos/duplicados/página/créditos/agotado) + `toScore`. |
 | `POST /api/score-leads` | Scorea `ids` (máx 3) del venture; el cliente llama en loop después de `/api/prospect`. |
 | `POST /api/reveal-emails` | Auto-reveal Apollo (máx 10). `retryNoEmail` reintenta los "sin email (intento previo)" (gasta créditos). |
+| `POST /api/rescore-discarded` | Sin `ids`: lista candidatas (fashion discarded, score 35–49). Con `ids` (máx 2): re-puntúa con v2. |
 | `POST /api/unlock-contact` | Busca el person ID en Apollo por `orgId` + nombre, luego revela email con `matchPerson`. Gasta 1 crédito Apollo. |
 
 ## Convenciones

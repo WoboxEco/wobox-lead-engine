@@ -12,6 +12,7 @@ import * as importCsv from './import-csv.js';
 import * as importFromHubspot from './import-from-hubspot.js';
 import * as importHubspotCsv from './import-hubspot-csv.js';
 import * as nurtureSequence from './nurture-sequence.js';
+import * as rescoreDiscarded from './rescore-discarded.js';
 import * as scoreLeads from './score-leads.js';
 import * as searchLeadsWeb from './search-leads-web.js';
 import * as searchLeads from './search-leads.js';
@@ -50,6 +51,19 @@ program
   .option('--model <alias>', 'Override del modelo: haiku | sonnet | opus (default: haiku)')
   .action(async (opts) => {
     await scoreLeads.run(opts);
+  });
+
+program
+  .command('rescore-discarded')
+  .description(
+    'Re-puntua con el scoring vigente (fashion v2) los wobox_fashion discarded con ultimo score 35-49',
+  )
+  .option('--min <n>', 'Score minimo (default: 35)')
+  .option('--max <n>', 'Score maximo (default: 49)')
+  .option('--limit <n>', 'Maximo de companies a re-puntuar (default: 50)')
+  .option('--dry-run', 'Solo contar candidatas, sin llamar a Claude')
+  .action(async (opts) => {
+    await rescoreDiscarded.run(opts);
   });
 
 program

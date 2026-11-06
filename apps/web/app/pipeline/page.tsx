@@ -6,6 +6,7 @@ import { UnlockButton } from './unlock-button';
 
 import { ProspectBar } from './prospect-bar';
 import { RecentSearches } from './recent-searches';
+import { RescoreButton } from './rescore-button';
 import { VentureSelect } from './venture-select';
 
 export const dynamic = 'force-dynamic';
@@ -163,6 +164,7 @@ export default async function PipelinePage({ searchParams }: PageProps) {
 
       {/* Acciones: +Prospect (sourcing+scoring) y Generar mensajes */}
       <ProspectBar defaultVenture={venture ?? ''} />
+      {venture === 'wobox_fashion' ? <RescoreButton /> : null}
       <RecentSearches />
 
       {/* Filtros */}

@@ -12,6 +12,8 @@ const state = {
   apolloPages: {} as Record<number, Array<{ id: string; name: string }>>,
   totalPages: 1,
   apolloCalls: [] as number[],
+  apolloParams: [] as Row[],
+  tagIds: ['tag-apparel', 'tag-footwear'] as string[],
 };
 
 function makeDb() {
@@ -49,8 +51,11 @@ vi.mock('@wobox/core', () => ({
 
 vi.mock('@wobox/integrations', () => ({
   apollo: {
-    searchOrganizations: async ({ page }: { page: number }) => {
+    resolveIndustryTagIds: async () => ({ ids: state.tagIds, resolved: {}, missing: [] }),
+    searchOrganizations: async (params: Row & { page: number }) => {
+      const { page } = params;
       state.apolloCalls.push(page);
+      state.apolloParams.push(params);
       return {
         organizations: state.apolloPages[page] ?? [],
         page,
@@ -74,6 +79,8 @@ beforeEach(() => {
   state.apolloPages = {};
   state.totalPages = 10;
   state.apolloCalls = [];
+  state.apolloParams = [];
+  state.tagIds = ['tag-apparel', 'tag-footwear'];
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
@@ -141,6 +148,52 @@ describe('search-leads paginación', () => {
     state.upserts = [];
     await run({ venture: 'wobox_fashion' });
     expect(state.upserts[0]?.filters_hash).not.toBe(withRegion);
+  });
+});
+
+describe('search-leads ICP wobox_fashion', () => {
+  it('manda industry tag IDs, 11-500 empleados y sin q_keywords', async () => {
+    state.apolloPages[1] = [org(1)];
+    await run({ venture: 'wobox_fashion' });
+    expect(state.apolloParams[0]).toMatchObject({
+      industryTagIds: ['tag-apparel', 'tag-footwear'],
+      employeeRanges: ['11,50', '51,200', '201,500'],
+      keywords: '',
+    });
+  });
+
+  it('sin tag IDs cae a keyword tags y cambia el hash', async () => {
+    state.apolloPages[1] = [org(1)];
+    await run({ venture: 'wobox_fashion' });
+    const withTags = state.upserts[0]?.filters_hash;
+    state.upserts = [];
+    state.tagIds = [];
+    await run({ venture: 'wobox_fashion' });
+    expect(state.apolloParams[1]?.industryTagIds).toEqual([]);
+    expect(state.apolloParams[1]?.keywords).toContain('indumentaria');
+    expect(state.upserts[0]?.filters_hash).not.toBe(withTags);
+  });
+
+  it('filtra por rubro antes de insertar y los cuenta aparte', async () => {
+    state.apolloPages[1] = [
+      { id: 'a', name: 'Pizzeria Don Luis' },
+      { id: 'b', name: 'Evaplas', industry: 'plastics' } as never,
+      { id: 'c', name: 'Jackie Smith', industry: 'apparel & fashion' } as never,
+    ];
+    const r = await run({ venture: 'wobox_fashion' });
+    expect(r).toMatchObject({ inserted: 1, filteredOut: 2, duplicates: 0 });
+    expect(state.inserted.map((x) => x.name)).toEqual(['Jackie Smith']);
+    expect(state.inserted[0]).toMatchObject({
+      subsector: 'apparel & fashion',
+      vertical: 'fashion',
+    });
+  });
+
+  it('wobox_food no aplica el pre-filtro ni tag IDs', async () => {
+    state.apolloPages[1] = [{ id: 'a', name: 'Club Atlético Alimentos' }];
+    const r = await run({ venture: 'wobox_food' });
+    expect(r).toMatchObject({ inserted: 1, filteredOut: 0 });
+    expect(state.apolloParams[0]?.industryTagIds).toEqual([]);
   });
 });
 
