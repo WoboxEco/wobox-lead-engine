@@ -42,12 +42,13 @@ export async function deliverMessage(
       .eq('id', msg.contact_id)
       .single();
     if (contactErr) throw new Error(`load contact: ${contactErr.message}`);
-    to = resolveEmailRecipient(
-      contactData as unknown as {
-        email: string | null;
-        companies: { generic_email: string | null } | null;
-      } | null,
-    );
+    to =
+      resolveEmailRecipient(
+        contactData as unknown as {
+          email: string | null;
+          companies: { generic_email: string | null } | null;
+        } | null,
+      ) ?? '';
   }
   if (!to) {
     throw new Error(
