@@ -162,6 +162,12 @@ describe('search-leads ICP wobox_fashion', () => {
     });
   });
 
+  it('calzado suma keyword tags de calzado al filtro de industria', async () => {
+    state.apolloPages[1] = [org(1)];
+    await run({ venture: 'wobox_fashion', subsector: 'calzado' });
+    expect(state.apolloParams[0]?.keywordTags).toContain('zapatos');
+  });
+
   it('sin tag IDs cae a keyword tags y cambia el hash', async () => {
     state.apolloPages[1] = [org(1)];
     await run({ venture: 'wobox_fashion' });

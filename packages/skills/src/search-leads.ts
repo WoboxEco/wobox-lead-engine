@@ -11,6 +11,7 @@ import {
   FASHION_EMPLOYEE_RANGES,
   FASHION_INDUSTRIES_BY_SUBSECTOR,
   FASHION_KEYWORDS_BY_SUBSECTOR,
+  FASHION_KEYWORD_TAGS_BY_SUBSECTOR,
   FASHION_SUBSECTORS,
   type FashionSubsector,
   checkFashionIcp,
@@ -193,6 +194,11 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
     }
   }
   const industryMode = industryTagIds.length > 0 ? 'tag_ids' : 'keyword_tags';
+  // Con tag IDs, el rubro (ej. calzado) se acota con keyword tags dentro de la industria.
+  const keywordTags =
+    industryMode === 'tag_ids' && fashionSubsector
+      ? FASHION_KEYWORD_TAGS_BY_SUBSECTOR[fashionSubsector]
+      : [];
 
   const perPage = opts.limit ? Number.parseInt(opts.limit, 10) : 25;
   const dryRun = !!opts.dryRun;
@@ -278,6 +284,7 @@ export async function run(opts: SearchLeadsOptions): Promise<SearchLeadsResult> 
       res = await apollo.searchOrganizations({
         industries,
         industryTagIds,
+        keywordTags,
         excludeIndustries,
         locations,
         employeeRanges,

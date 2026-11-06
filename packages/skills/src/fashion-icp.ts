@@ -6,16 +6,16 @@
 export const FASHION_SUBSECTORS = ['ropa', 'calzado', 'muebles_deco', 'todos'] as const;
 export type FashionSubsector = (typeof FASHION_SUBSECTORS)[number];
 
-/** Industrias de moda (taxonomía LinkedIn/Apollo). */
-const FASHION_INDUSTRIES = [
-  'apparel & fashion',
-  'retail apparel and fashion',
-  'footwear',
-  'fashion accessories',
-  'luxury goods & jewelry',
-];
+/**
+ * Industrias de moda (taxonomía `linkedin_industry` de Apollo).
+ * Verificado contra la API el 2026-11-06: Apollo NO tiene "footwear", "fashion accessories",
+ * "retail apparel and fashion" ni "home furnishings" como industria (footwear existe solo como
+ * keyword/specialty). Las marcas de calzado y carteras (RUMA, John Foos, Kandil) caen en
+ * "apparel & fashion". Con estas 2 industrias entran 13 de las 17 marcas del perfil ideal.
+ */
+const FASHION_INDUSTRIES = ['apparel & fashion', 'luxury goods & jewelry'];
 
-const HOME_INDUSTRIES = ['furniture', 'home furnishings', 'retail furniture and home furnishings'];
+const HOME_INDUSTRIES = ['furniture'];
 
 /** Industrias que se mandan a Apollo como `organization_industry_tag_ids` por rubro. */
 export const FASHION_INDUSTRIES_BY_SUBSECTOR: Record<FashionSubsector, string[]> = {
@@ -23,6 +23,17 @@ export const FASHION_INDUSTRIES_BY_SUBSECTOR: Record<FashionSubsector, string[]>
   ropa: FASHION_INDUSTRIES,
   calzado: FASHION_INDUSTRIES,
   muebles_deco: HOME_INDUSTRIES,
+};
+
+/**
+ * Keyword tags que se suman al filtro de industria para acotar el rubro (OR entre ellas).
+ * Calzado: con apparel & fashion + estas tags trae RUMA, John Foos, Kandil, Tate, Batistella…
+ */
+export const FASHION_KEYWORD_TAGS_BY_SUBSECTOR: Record<FashionSubsector, string[]> = {
+  todos: [],
+  ropa: [],
+  calzado: ['footwear', 'calzado', 'zapatos', 'zapatillas', 'shoes'],
+  muebles_deco: [],
 };
 
 /** Keywords text-match (solo se usan si no se pudieron resolver los tag IDs). */
@@ -40,8 +51,24 @@ export const FASHION_EMPLOYEE_RANGES = ['11,50', '51,200', '201,500'];
  * Industrias que además de las del filtro se toleran en el pre-filtro (Apollo a veces clasifica
  * marcas de ropa con estas). Los términos negativos siguen aplicando.
  */
-const TOLERATED_FASHION = ['textiles', 'retail', 'consumer goods', 'sporting goods', 'cosmetics'];
-const TOLERATED_HOME = ['retail', 'interior design', 'textiles', 'consumer goods'];
+const TOLERATED_FASHION = [
+  'footwear',
+  'fashion accessories',
+  'retail apparel and fashion',
+  'textiles',
+  'retail',
+  'consumer goods',
+  'sporting goods',
+  'cosmetics',
+];
+const TOLERATED_HOME = [
+  'home furnishings',
+  'retail furniture and home furnishings',
+  'retail',
+  'interior design',
+  'textiles',
+  'consumer goods',
+];
 
 /** Términos (prefijos de palabra, sin acentos) que delatan rubros ajenos aunque digan "moda". */
 export const NEGATIVE_TERMS = [

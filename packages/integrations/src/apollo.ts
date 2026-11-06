@@ -39,6 +39,11 @@ export interface SearchOrganizationsParams {
    * Si se pasan, anula `industries` (Apollo aplica este filtro como hard match).
    */
   industryTagIds?: string[];
+  /**
+   * Keyword tags que se mandan JUNTO con `industryTagIds` (`q_organization_keyword_tags`, OR
+   * entre ellas) para acotar dentro de la industria. Sin `industryTagIds` se ignora.
+   */
+  keywordTags?: string[];
   locations?: string[];
   employeeRanges?: string[]; // e.g. ["11,50", "51,200"]
   /** General text query (matches name, description, etc.) */
@@ -66,6 +71,7 @@ export async function searchOrganizations(
   // Si hay tag IDs, usamos solo eso. Si no, mandamos keyword tags.
   if (params.industryTagIds?.length) {
     body.organization_industry_tag_ids = params.industryTagIds;
+    if (params.keywordTags?.length) body.q_organization_keyword_tags = params.keywordTags;
   } else if (params.industries?.length) {
     body.q_organization_keyword_tags = params.industries;
   }
@@ -121,8 +127,22 @@ export function normalizeIndustryName(name: string): string {
     .trim();
 }
 
-/** IDs verificados (nombre normalizado → tag ID). Completar con los que loguea el lookup. */
-export const KNOWN_INDUSTRY_TAG_IDS: Readonly<Record<string, string>> = {};
+/**
+ * IDs verificados (nombre normalizado → tag ID). Sacados de `POST /tags/search`
+ * (`kind: linkedin_industry`) el 2026-11-06. Para agregar uno, copiarlo del log `resolved`.
+ */
+export const KNOWN_INDUSTRY_TAG_IDS: Readonly<Record<string, string>> = {
+  'apparel and fashion': '5567cd82736964540d0b0000',
+  'luxury goods and jewelry': '5567cda97369644cfd3e0000',
+  furniture: '5567cede73696440d0040000',
+  retail: '5567ced173696450cb580000',
+  textiles: '5567e1327369641d91ce0300',
+  'consumer goods': '5567ce987369643b789e0000',
+  'sporting goods': '5567e113736964198d5e0800',
+  'food and beverages': '5567ce1e7369643b806a0000',
+  supermarkets: '5567e2a97369642a553d0000',
+  wholesale: '5567d01e73696457ee100000',
+};
 
 /** nombre normalizado → tag ID (o null = lookup ya falló en este proceso). */
 const industryTagCache = new Map<string, string | null>(Object.entries(KNOWN_INDUSTRY_TAG_IDS));
@@ -146,12 +166,18 @@ export interface ResolveIndustryTagIdsResult {
 
 /** Resuelve nombres de industria a tag IDs de Apollo (cache → lookup). Nunca tira. */
 export async function resolveIndustryTagIds(names: string[]): Promise<ResolveIndustryTagIdsResult> {
-  const keys = [...new Set(names.map(normalizeIndustryName).filter(Boolean))];
+  // nombre normalizado → nombre original (el fuzzy de Apollo matchea mejor "apparel & fashion").
+  const byKey = new Map<string, string>();
+  for (const n of names) {
+    const k = normalizeIndustryName(n);
+    if (k && !byKey.has(k)) byKey.set(k, n);
+  }
+  const keys = [...byKey.keys()];
   await Promise.all(
     keys
       .filter((k) => !industryTagCache.has(k))
       .map(async (k) => {
-        industryTagCache.set(k, await lookupIndustryTag(k));
+        industryTagCache.set(k, await lookupIndustryTag(byKey.get(k) ?? k));
       }),
   );
   const resolved: Record<string, string> = {};
@@ -164,13 +190,14 @@ export async function resolveIndustryTagIds(names: string[]): Promise<ResolveInd
   return { ids: [...new Set(Object.values(resolved))], resolved, missing };
 }
 
-async function lookupIndustryTag(key: string): Promise<string | null> {
+async function lookupIndustryTag(name: string): Promise<string | null> {
+  const key = normalizeIndustryName(name);
   try {
     const res = await apolloFetch<{
       tags?: Array<{ id?: string; _id?: string; cleaned_name?: string; name?: string }>;
     }>(
       '/tags/search',
-      { q_tag_fuzzy_name: key, kind: 'linkedin_industry', display_mode: 'fuzzy_select_mode' },
+      { q_tag_fuzzy_name: name, kind: 'linkedin_industry', per_page: 10 },
       0,
       TAG_LOOKUP_TIMEOUT_MS,
     );
